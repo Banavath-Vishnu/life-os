@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>LifeOS - Targets Tracker</title>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Playfair+Display:wght@700&amp;display=swap" rel="stylesheet"/>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-background": "#151c27",
+                        "surface-container-high": "#e2e8f8",
+                        "secondary": "#006c49",
+                        "primary-fixed": "#d8e2ff",
+                        "on-surface-variant": "#414755",
+                        "surface": "#f9f9ff",
+                        "on-secondary-container": "#00714d",
+                        "surface-dim": "#d3daea",
+                        "surface-tint": "#005bc1",
+                        "on-error-container": "#93000a",
+                        "surface-variant": "#dce2f3",
+                        "surface-container-low": "#f0f3ff",
+                        "tertiary-fixed": "#e9ddff",
+                        "tertiary-container": "#8455ef",
+                        "on-tertiary": "#ffffff",
+                        "inverse-surface": "#2a313d",
+                        "tertiary-fixed-dim": "#d0bcff",
+                        "on-primary-fixed": "#001a41",
+                        "on-tertiary-fixed-variant": "#5516be",
+                        "tertiary": "#6b38d4",
+                        "error-container": "#ffdad6",
+                        "inverse-primary": "#adc6ff",
+                        "on-surface": "#151c27",
+                        "surface-bright": "#f9f9ff",
+                        "secondary-container": "#6cf8bb",
+                        "on-tertiary-container": "#fffbff",
+                        "primary": "#0058bc",
+                        "on-tertiary-fixed": "#23005c",
+                        "secondary-fixed": "#6ffbbe",
+                        "primary-fixed-dim": "#adc6ff",
+                        "secondary-fixed-dim": "#4edea3",
+                        "on-primary-fixed-variant": "#004493",
+                        "on-primary": "#ffffff",
+                        "inverse-on-surface": "#ebf1ff",
+                        "surface-container-lowest": "#ffffff",
+                        "surface-container": "#e7eefe",
+                        "surface-container-highest": "#dce2f3",
+                        "outline-variant": "#c1c6d7",
+                        "on-secondary-fixed": "#002113",
+                        "error": "#ba1a1a",
+                        "on-error": "#ffffff",
+                        "primary-container": "#0070eb",
+                        "on-secondary-fixed-variant": "#005236",
+                        "on-secondary": "#ffffff",
+                        "on-primary-container": "#fefcff",
+                        "background": "#f9f9ff",
+                        "outline": "#717786"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "2xl": "20px",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "margin-mobile": "20px",
+                        "xs": "4px",
+                        "sm": "8px",
+                        "xl": "32px",
+                        "margin-desktop": "40px",
+                        "lg": "24px",
+                        "md": "16px",
+                        "base": "8px",
+                        "gutter": "16px"
+                    },
+                    "fontFamily": {
+                        "headline-md": ["Inter"],
+                        "display-stat": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "body-md": ["Inter"],
+                        "label-sm": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "label-md": ["Inter"],
+                        "headline-lg-mobile": ["Inter"]
+                    },
+                    "fontSize": {
+                        "headline-md": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                        "display-stat": ["48px", {"lineHeight": "48px", "letterSpacing": "-0.04em", "fontWeight": "700"}],
+                        "headline-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                        "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                        "label-sm": ["12px", {"lineHeight": "16px", "fontWeight": "500"}],
+                        "body-lg": ["18px", {"lineHeight": "28px", "fontWeight": "400"}],
+                        "label-md": ["14px", {"lineHeight": "20px", "fontWeight": "600"}],
+                        "headline-lg-mobile": ["28px", {"lineHeight": "34px", "letterSpacing": "-0.02em", "fontWeight": "700"}]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            display: inline-block;
+            vertical-align: middle;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f9f9ff;
+        }
+        .glass {
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+        .premium-shadow {
+            box-shadow: 0 10px 30px -5px rgba(0, 88, 188, 0.08);
+        }
+        /* Custom scrollbar for horizontal tabs */
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="text-on-surface antialiased pb-32">
+<!-- Top App Bar (Shared Component Logic) -->
+<header class="sticky top-0 z-50 bg-surface/80 dark:bg-background/80 backdrop-blur-xl flex justify-between items-center w-full px-margin-mobile h-16">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full overflow-hidden border border-outline-variant/30">
+<img class="w-full h-full object-cover" data-alt="A professional studio headshot of a young professional with a friendly smile, clean minimalist lighting, soft shadows, high-key photography style, light blue background to match the primary brand color." src="https://lh3.googleusercontent.com/aida-public/AB6AXuD2szfwxBIU_9BVQGHtaLh0V_tbzJfp4qWWx5WiqZzXAPq4C5P5D8d5hbbu3UEds37cPEH_Z29nuA29G8JEemr5__Dnvk_Gh00PVY6H4oDDXADr0kPzkvwoKsm1WVPJ84BpRXPCVjtzNvKSyLVXXdkpTVK_P2IVkJUct7QsEd-MKUYQrFJVWd8wVg_7YfRg6yU9wh7dzgEvOVMTijjwroUsDqfm9GI3MzqUKdGNW2IkiyZvpmIdqxgH8vKMWyn4RKk-f41BcmC0r_A"/>
+</div>
+<h1 class="font-headline-md text-headline-md-mobile font-bold text-primary">LifeOS</h1>
+</div>
+<div class="flex items-center gap-4">
+<button class="material-symbols-outlined text-primary hover:opacity-80 transition-opacity p-2">search</button>
+</div>
+</header>
+<main class="px-margin-mobile pt-lg">
+<!-- Dashboard Header -->
+<div class="mb-xl">
+<h2 class="font-headline-lg-mobile text-headline-lg-mobile text-on-surface mb-xs">Targets Tracker</h2>
+<p class="font-body-md text-body-md text-on-surface-variant">Focus on what matters most.</p>
+</div>
+<!-- Category Tabs -->
+<div class="flex gap-sm mb-lg overflow-x-auto hide-scrollbar py-2">
+<button class="bg-primary text-on-primary font-label-md text-label-md px-lg py-sm rounded-full whitespace-nowrap active:scale-95 duration-150">
+                All
+            </button>
+<button class="bg-surface-container-low text-on-surface-variant font-label-md text-label-md px-lg py-sm rounded-full border border-outline-variant/20 whitespace-nowrap hover:bg-surface-container-high transition-colors">
+                In Progress
+            </button>
+<button class="bg-surface-container-low text-on-surface-variant font-label-md text-label-md px-lg py-sm rounded-full border border-outline-variant/20 whitespace-nowrap hover:bg-surface-container-high transition-colors">
+                Completed
+            </button>
+</div>
+<!-- Grid of Targets (Bento-ish Mobile Grid) -->
+<div class="grid grid-cols-1 gap-md">
+<!-- Target Card 1: Learn AWS -->
+<div class="bg-surface-container-lowest border border-outline-variant/30 rounded-2xl p-md premium-shadow flex flex-col gap-md">
+<div class="flex justify-between items-start">
+<div class="flex items-center gap-md">
+<div class="w-12 h-12 rounded-xl bg-primary-fixed flex items-center justify-center text-on-primary-fixed-variant">
+<span class="material-symbols-outlined">cloud</span>
+</div>
+<div>
+<h3 class="font-label-md text-label-md text-on-surface">Learn AWS</h3>
+<p class="font-label-sm text-label-sm text-on-surface-variant">Certification Path</p>
+</div>
+</div>
+<span class="font-label-md text-label-md text-primary bg-primary-fixed/50 px-sm py-1 rounded-lg">75%</span>
+</div>
+<div class="space-y-sm">
+<div class="w-full h-2 bg-surface-container-high rounded-full overflow-hidden">
+<div class="h-full bg-primary rounded-full" style="width: 75%"></div>
+</div>
+<div class="flex justify-between">
+<span class="font-label-sm text-label-sm text-on-surface-variant">9 / 12 Modules</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">Target: July 30</span>
+</div>
+</div>
+</div>
+<!-- Target Card 2: Build LifeOS App -->
+<div class="bg-surface-container-lowest border border-outline-variant/30 rounded-2xl p-md premium-shadow flex flex-col gap-md">
+<div class="flex justify-between items-start">
+<div class="flex items-center gap-md">
+<div class="w-12 h-12 rounded-xl bg-secondary-fixed flex items-center justify-center text-on-secondary-fixed-variant">
+<span class="material-symbols-outlined">terminal</span>
+</div>
+<div>
+<h3 class="font-label-md text-label-md text-on-surface">Build LifeOS App</h3>
+<p class="font-label-sm text-label-sm text-on-surface-variant">UI/UX Development</p>
+</div>
+</div>
+<span class="font-label-md text-label-md text-secondary bg-secondary-fixed/50 px-sm py-1 rounded-lg">40%</span>
+</div>
+<div class="space-y-sm">
+<div class="w-full h-2 bg-surface-container-high rounded-full overflow-hidden">
+<div class="h-full bg-secondary rounded-full" style="width: 40%"></div>
+</div>
+<div class="flex justify-between">
+<span class="font-label-sm text-label-sm text-on-surface-variant">4 / 10 Sprints</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">Target: Aug 15</span>
+</div>
+</div>
+</div>
+<!-- Target Card 3: Read 12 Books -->
+<div class="bg-surface-container-lowest border border-outline-variant/30 rounded-2xl p-md premium-shadow flex flex-col gap-md">
+<div class="flex justify-between items-start">
+<div class="flex items-center gap-md">
+<div class="w-12 h-12 rounded-xl bg-tertiary-fixed flex items-center justify-center text-on-tertiary-fixed-variant">
+<span class="material-symbols-outlined">menu_book</span>
+</div>
+<div>
+<h3 class="font-label-md text-label-md text-on-surface">Read 12 Books</h3>
+<p class="font-label-sm text-label-sm text-on-surface-variant">Personal Growth</p>
+</div>
+</div>
+<span class="font-label-md text-label-md text-tertiary bg-tertiary-fixed/50 px-sm py-1 rounded-lg">58%</span>
+</div>
+<div class="space-y-sm">
+<div class="w-full h-2 bg-surface-container-high rounded-full overflow-hidden">
+<div class="h-full bg-tertiary rounded-full" style="width: 58%"></div>
+</div>
+<div class="flex justify-between">
+<span class="font-label-sm text-label-sm text-on-surface-variant">7 / 12 Books</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">Target: Dec 31</span>
+</div>
+</div>
+</div>
+<!-- Target Card 4: Run 100 KM -->
+<div class="bg-surface-container-lowest border border-outline-variant/30 rounded-2xl p-md premium-shadow flex flex-col gap-md">
+<div class="flex justify-between items-start">
+<div class="flex items-center gap-md">
+<div class="w-12 h-12 rounded-xl bg-primary-fixed flex items-center justify-center text-on-primary-fixed-variant">
+<span class="material-symbols-outlined">directions_run</span>
+</div>
+<div>
+<h3 class="font-label-md text-label-md text-on-surface">Run 100 KM</h3>
+<p class="font-label-sm text-label-sm text-on-surface-variant">Physical Health</p>
+</div>
+</div>
+<span class="font-label-md text-label-md text-primary bg-primary-fixed/50 px-sm py-1 rounded-lg">85%</span>
+</div>
+<div class="space-y-sm">
+<div class="w-full h-2 bg-surface-container-high rounded-full overflow-hidden">
+<div class="h-full bg-primary rounded-full" style="width: 85%"></div>
+</div>
+<div class="flex justify-between">
+<span class="font-label-sm text-label-sm text-on-surface-variant">85 / 100 KM</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">Target: July 15</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Quick Stats Section -->
+<div class="mt-xl grid grid-cols-2 gap-md">
+<div class="bg-surface-container-low p-md rounded-2xl border border-outline-variant/20">
+<p class="font-label-sm text-label-sm text-on-surface-variant mb-xs">Active Targets</p>
+<p class="font-headline-md text-headline-md text-primary">08</p>
+</div>
+<div class="bg-surface-container-low p-md rounded-2xl border border-outline-variant/20">
+<p class="font-label-sm text-label-sm text-on-surface-variant mb-xs">Completed</p>
+<p class="font-headline-md text-headline-md text-secondary">24</p>
+</div>
+</div>
+</main>
+<!-- FAB: Add New Target -->
+<button class="fixed right-6 bottom-24 w-14 h-14 bg-primary text-on-primary rounded-full shadow-2xl flex items-center justify-center active:scale-90 duration-200 z-[60]">
+<span class="material-symbols-outlined" style="font-size: 28px;">add</span>
+</button>
+<!-- Bottom Navigation Bar (Shared Component Logic) -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-6 pt-3 bg-surface/80 dark:bg-background/80 backdrop-blur-2xl border-t border-outline-variant/30 shadow-lg">
+<div class="flex flex-col items-center justify-center text-on-surface-variant hover:bg-surface-container-low transition-colors rounded-xl px-2 py-1">
+<span class="material-symbols-outlined">home_app_logo</span>
+<span class="font-label-sm text-label-sm">Home</span>
+</div>
+<div class="flex flex-col items-center justify-center text-on-surface-variant hover:bg-surface-container-low transition-colors rounded-xl px-2 py-1">
+<span class="material-symbols-outlined">notes</span>
+<span class="font-label-sm text-label-sm">Notes</span>
+</div>
+<div class="flex flex-col items-center justify-center text-on-surface-variant hover:bg-surface-container-low transition-colors rounded-xl px-2 py-1">
+<span class="material-symbols-outlined">format_list_bulleted</span>
+<span class="font-label-sm text-label-sm">Tasks</span>
+</div>
+<!-- Progress is Active here given it's a Targets/Progress screen -->
+<div class="flex flex-col items-center justify-center text-primary dark:text-primary-fixed-dim relative after:content-[''] after:absolute after:-bottom-1 after:w-1 after:h-1 after:bg-primary after:rounded-full scale-90 transition-transform duration-200">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">analytics</span>
+<span class="font-label-sm text-label-sm">Progress</span>
+</div>
+<div class="flex flex-col items-center justify-center text-on-surface-variant hover:bg-surface-container-low transition-colors rounded-xl px-2 py-1">
+<span class="material-symbols-outlined">person</span>
+<span class="font-label-sm text-label-sm">Profile</span>
+</div>
+</nav>
+<script>
+        // Simple interactive feedback for tab switching
+        const tabs = document.querySelectorAll('.flex.gap-sm.mb-lg button');
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                tabs.forEach(t => {
+                    t.classList.remove('bg-primary', 'text-on-primary');
+                    t.classList.add('bg-surface-container-low', 'text-on-surface-variant');
+                });
+                tab.classList.add('bg-primary', 'text-on-primary');
+                tab.classList.remove('bg-surface-container-low', 'text-on-surface-variant');
+            });
+        });
+
+        // Micro-interaction for cards
+        const cards = document.querySelectorAll('.premium-shadow');
+        cards.forEach(card => {
+            card.addEventListener('touchstart', () => {
+                card.style.transform = 'scale(0.98)';
+                card.style.transition = 'transform 0.1s ease';
+            });
+            card.addEventListener('touchend', () => {
+                card.style.transform = 'scale(1)';
+            });
+        });
+    </script>
+</body></html>

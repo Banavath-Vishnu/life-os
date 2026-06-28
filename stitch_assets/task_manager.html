@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>LifeOS - Tasks</title>
+<!-- Tailwind CSS v3 CDN with plugins -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Google Fonts for a clean, modern look -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<style data-purpose="typography">
+    body {
+      font-family: 'Inter', sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+  </style>
+<style data-purpose="custom-layout">
+    /* Custom height for mobile-first view */
+    .iphone-screen {
+      max-width: 414px;
+      height: 896px;
+      margin: 0 auto;
+      position: relative;
+      overflow-y: auto;
+      background-color: #F8F9FA;
+      box-shadow: 0 0 40px rgba(0,0,0,0.1);
+    }
+    .status-bar-height {
+      height: 44px;
+    }
+    .custom-shadow-sm {
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+    /* Hide scrollbar but keep functionality */
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+<!-- BEGIN: Main Container (Mobile Frame) -->
+<main class="iphone-screen bg-white flex flex-col no-scrollbar">
+<!-- BEGIN: Header Section -->
+<header class="sticky top-0 bg-white z-20 px-6 pt-12 pb-4">
+<div class="flex items-center justify-between mb-6">
+<button class="p-1">
+<svg class="h-6 w-6 text-gray-700" fill="none" stroke="currentColor" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<path d="M4 6h16M4 12h16m-7 6h7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+<h1 class="text-xl font-bold text-gray-900">Tasks</h1>
+<button class="p-1">
+<svg class="h-6 w-6 text-gray-700" fill="none" stroke="currentColor" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<path d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+<!-- BEGIN: Tab Navigation -->
+<div class="flex space-x-2 mb-4" data-purpose="tabs">
+<button class="px-5 py-2 rounded-full bg-[#2E4053] text-white text-sm font-medium transition-all">Today</button>
+<button class="px-5 py-2 rounded-full bg-gray-100 text-gray-500 text-sm font-medium hover:bg-gray-200">Upcoming</button>
+<button class="px-5 py-2 rounded-full bg-gray-100 text-gray-500 text-sm font-medium hover:bg-gray-200">Completed</button>
+</div>
+<!-- END: Tab Navigation -->
+</header>
+<!-- END: Header Section -->
+<!-- BEGIN: Content Area -->
+<section class="flex-1 px-6 pb-24 overflow-y-auto no-scrollbar" data-purpose="task-list">
+<h2 class="text-lg font-bold text-gray-900 mb-4">Today</h2>
+<!-- Task Item 1: Work -->
+<div class="bg-white border border-gray-100 rounded-xl p-4 mb-4 custom-shadow-sm flex items-start gap-4">
+<div class="pt-1">
+<input class="w-5 h-5 rounded border-gray-300 text-[#2E4053] focus:ring-[#2E4053]" type="checkbox"/>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-start">
+<h3 class="text-sm font-semibold text-gray-800">Design new landing page</h3>
+<div class="flex items-center gap-1">
+<span class="w-2 h-2 rounded-full bg-red-500"></span>
+<span class="text-[10px] font-bold text-gray-400 uppercase tracking-tight">High</span>
+</div>
+</div>
+<div class="flex items-center gap-1 mt-1">
+<svg class="w-3 h-3 text-gray-400" fill="currentColor" viewbox="0 0 20 20"><circle cx="10" cy="10" r="10"></circle></svg>
+<span class="text-xs text-gray-400">Work</span>
+</div>
+</div>
+</div>
+<!-- Task Item 2: Personal -->
+<div class="bg-white border border-gray-100 rounded-xl p-4 mb-4 custom-shadow-sm flex items-start gap-4">
+<div class="pt-1">
+<input class="w-5 h-5 rounded border-gray-300 text-[#2E4053] focus:ring-[#2E4053]" type="checkbox"/>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-start">
+<h3 class="text-sm font-semibold text-gray-800">Study System Design</h3>
+<div class="flex items-center gap-1">
+<span class="w-2 h-2 rounded-full bg-orange-400"></span>
+<span class="text-[10px] font-bold text-gray-400 uppercase tracking-tight">Medium</span>
+</div>
+</div>
+<div class="flex items-center gap-1 mt-1">
+<svg class="w-3 h-3 text-gray-400" fill="currentColor" viewbox="0 0 20 20"><circle cx="10" cy="10" r="10"></circle></svg>
+<span class="text-xs text-gray-400">Learning</span>
+</div>
+</div>
+</div>
+<!-- Task Item 3: Health -->
+<div class="bg-white border border-gray-100 rounded-xl p-4 mb-4 custom-shadow-sm flex items-start gap-4">
+<div class="pt-1">
+<input class="w-5 h-5 rounded border-gray-300 text-[#2E4053] focus:ring-[#2E4053]" type="checkbox"/>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-start">
+<h3 class="text-sm font-semibold text-gray-800">Workout for 45 minutes</h3>
+<div class="flex items-center gap-1">
+<span class="w-2 h-2 rounded-full bg-orange-400"></span>
+<span class="text-[10px] font-bold text-gray-400 uppercase tracking-tight">Medium</span>
+</div>
+</div>
+<div class="flex items-center gap-1 mt-1">
+<svg class="w-3 h-3 text-gray-400" fill="currentColor" viewbox="0 0 20 20"><circle cx="10" cy="10" r="10"></circle></svg>
+<span class="text-xs text-gray-400">Health</span>
+</div>
+</div>
+</div>
+<!-- Task Item 4: Personal -->
+<div class="bg-white border border-gray-100 rounded-xl p-4 mb-4 custom-shadow-sm flex items-start gap-4">
+<div class="pt-1">
+<input class="w-5 h-5 rounded border-gray-300 text-[#2E4053] focus:ring-[#2E4053]" type="checkbox"/>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-start">
+<h3 class="text-sm font-semibold text-gray-800">Read 20 pages</h3>
+<div class="flex items-center gap-1">
+<span class="w-2 h-2 rounded-full bg-green-500"></span>
+<span class="text-[10px] font-bold text-gray-400 uppercase tracking-tight">Low</span>
+</div>
+</div>
+<div class="flex items-center gap-1 mt-1">
+<svg class="w-3 h-3 text-gray-400" fill="currentColor" viewbox="0 0 20 20"><circle cx="10" cy="10" r="10"></circle></svg>
+<span class="text-xs text-gray-400">Personal</span>
+</div>
+</div>
+</div>
+<!-- Task Item 5: Personal -->
+<div class="bg-white border border-gray-100 rounded-xl p-4 mb-4 custom-shadow-sm flex items-start gap-4">
+<div class="pt-1">
+<input class="w-5 h-5 rounded border-gray-300 text-[#2E4053] focus:ring-[#2E4053]" type="checkbox"/>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-start">
+<h3 class="text-sm font-semibold text-gray-800">Grocery shopping</h3>
+<div class="flex items-center gap-1">
+<span class="w-2 h-2 rounded-full bg-green-500"></span>
+<span class="text-[10px] font-bold text-gray-400 uppercase tracking-tight">Low</span>
+</div>
+</div>
+<div class="flex items-center gap-1 mt-1">
+<svg class="w-3 h-3 text-gray-400" fill="currentColor" viewbox="0 0 20 20"><circle cx="10" cy="10" r="10"></circle></svg>
+<span class="text-xs text-gray-400">Personal</span>
+</div>
+</div>
+</div>
+</section>
+<!-- END: Content Area -->
+<!-- BEGIN: Floating Action Button -->
+<div class="absolute bottom-24 right-6 z-30">
+<button aria-label="Add Task" class="w-14 h-14 bg-[#F1C40F] rounded-full flex items-center justify-center shadow-lg hover:scale-105 transition-transform active:scale-95">
+<svg class="h-8 w-8 text-white" fill="none" stroke="currentColor" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<path d="M12 4v16m8-8H4" stroke-linecap="round" stroke-linejoin="round" stroke-width="3"></path>
+</svg>
+</button>
+</div>
+<!-- END: Floating Action Button -->
+<!-- BEGIN: Bottom Navigation -->
+<nav class="absolute bottom-0 w-full bg-white border-t border-gray-100 px-6 py-4 flex justify-between items-center z-40" data-purpose="bottom-nav">
+<button class="flex flex-col items-center gap-1">
+<svg class="h-6 w-6 text-gray-400" fill="none" stroke="currentColor" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span class="text-[10px] font-medium text-gray-400">Home</span>
+</button>
+<button class="flex flex-col items-center gap-1">
+<svg class="h-6 w-6 text-gray-400" fill="none" stroke="currentColor" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span class="text-[10px] font-medium text-gray-400">Notes</span>
+</button>
+<button class="flex flex-col items-center gap-1">
+<div class="relative">
+<svg class="h-6 w-6 text-[#2E4053]" fill="none" stroke="currentColor" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<div class="absolute -top-1 -right-1 w-2 h-2 bg-[#F1C40F] rounded-full"></div>
+</div>
+<span class="text-[10px] font-bold text-[#2E4053]">Tasks</span>
+</button>
+<button class="flex flex-col items-center gap-1">
+<svg class="h-6 w-6 text-gray-400" fill="none" stroke="currentColor" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<path d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span class="text-[10px] font-medium text-gray-400">Progress</span>
+</button>
+<button class="flex flex-col items-center gap-1">
+<svg class="h-6 w-6 text-gray-400" fill="none" stroke="currentColor" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<path d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span class="text-[10px] font-medium text-gray-400">Profile</span>
+</button>
+</nav>
+<!-- END: Bottom Navigation -->
+</main>
+<!-- END: Main Container -->
+</body></html>

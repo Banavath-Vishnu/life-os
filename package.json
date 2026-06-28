@@ -1,7 +1,7 @@
 {
   "name": "lifeos",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
@@ -9,10 +9,30 @@
     "web": "expo start --web"
   },
   "dependencies": {
+    "@hookform/resolvers": "^5.4.0",
+    "babel-preset-expo": "~54.0.10",
     "expo": "~54.0.34",
+    "expo-av": "^16.0.8",
+    "expo-constants": "~18.0.13",
+    "expo-image-picker": "~17.0.11",
+    "expo-linking": "~8.0.12",
+    "expo-notifications": "~0.32.17",
+    "expo-router": "~6.0.24",
+    "expo-sqlite": "~16.0.10",
     "expo-status-bar": "~3.0.9",
+    "expo-system-ui": "~6.0.9",
     "react": "19.1.0",
-    "react-native": "0.81.5"
+    "react-dom": "19.1.0",
+    "react-hook-form": "^7.80.0",
+    "react-native": "0.81.5",
+    "react-native-mmkv": "^3.3.3",
+    "react-native-reanimated": "~4.1.1",
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-screens": "~4.16.0",
+    "react-native-svg": "15.12.1",
+    "react-native-worklets": "0.5.1",
+    "zod": "^4.4.3",
+    "zustand": "^5.0.14"
   },
   "private": true
 }

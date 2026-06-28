@@ -1,41 +1,91 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+# =========================================================================
+# SSH Keys & Credentials (CRITICAL - DO NOT COMMIT)
+# =========================================================================
+# Specific SSH keys generated locally
+vishnu
+vishnu.pub
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
 
-# dependencies
+# General credential formats
+*.key
+*.pem
+*.pub
+*.ppk
+*.pfx
+
+# =========================================================================
+# Dependencies & Package Managers
+# =========================================================================
 node_modules/
+.pnp
+.pnp.js
 
-# Expo
+# =========================================================================
+# Expo & React Native specific files
+# =========================================================================
 .expo/
 dist/
 web-build/
 expo-env.d.ts
 
-# Native
+# Native build folders
+ios/
+android/
+
+# Kotlin / Java native files
 .kotlin/
-*.orig.*
 *.jks
 *.p8
 *.p12
-*.key
 *.mobileprovision
 
-# Metro
+# Metro bundler files
 .metro-health-check*
 
-# debug
-npm-debug.*
-yarn-debug.*
-yarn-error.*
+# =========================================================================
+# Environment Variables & Secrets
+# =========================================================================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
-# macOS
+# =========================================================================
+# System & OS Files
+# =========================================================================
 .DS_Store
-*.pem
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
 
-# local env files
-.env*.local
+# =========================================================================
+# Editor & IDE Configs
+# =========================================================================
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.claude/
 
-# typescript
+# =========================================================================
+# Debug Logs & Temp Files
+# =========================================================================
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+*.orig
+*.bak
 *.tsbuildinfo
-
-# generated native folders
-/ios
-/android
