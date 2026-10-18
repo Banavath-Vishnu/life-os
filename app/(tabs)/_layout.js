@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Tabs, usePathname } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useTheme, getCategoryColor, CATEGORY_COLORS } from '../../src/core/theme/theme';
@@ -19,6 +19,8 @@ import { scheduleTaskNotifications, scheduleRoutineNotifications } from '../../s
 import { getLocalTodayStr, getLocalISOString } from '../../src/core/utils/date';
 import { z } from 'zod';
 import { getExpenseCategories, isDefaultExpenseCategory, MAX_CATEGORY_NAME_LENGTH } from '../../src/features/progress/categories';
+import NoteToolbar from '../../src/features/notes/NoteToolbar';
+import { applyNoteTool } from '../../src/features/notes/markdown';
 
 // Routine Item Schema
 const routineFormSchema = z.object({
@@ -128,6 +130,21 @@ export default function TabsLayout() {
     );
   };
 
+  // Quick-add note: formatting toolbar (same tools as the note editor)
+  const quickNoteInputRef = useRef(null);
+  const quickNoteSelectionRef = useRef({ start: 0, end: 0 });
+  const handleQuickNoteTool = (tool) => {
+    const text = getNoteValues('content') || '';
+    const result = applyNoteTool(text, quickNoteSelectionRef.current, tool);
+    if (!result) return;
+    setNoteValue('content', result.text, { shouldDirty: true });
+    quickNoteSelectionRef.current = result.selection;
+    setTimeout(() => {
+      quickNoteInputRef.current?.focus();
+      quickNoteInputRef.current?.setSelection?.(result.selection.start, result.selection.end);
+    }, 60);
+  };
+
   // Rendered inside each sheet that needs it (a sibling Modal can't open over a sheet on iOS)
   const renderTimePicker = () => (
     <TimePickerModal
@@ -180,6 +197,8 @@ export default function TabsLayout() {
     control: noteControl,
     handleSubmit: handleNoteSubmit,
     reset: resetNoteForm,
+    getValues: getNoteValues,
+    setValue: setNoteValue,
     formState: { errors: noteErrors },
   } = useForm({
     resolver: zodResolver(noteFormSchema),
@@ -735,6 +754,7 @@ export default function TabsLayout() {
         onClose={() => {
           setActiveSheet(null);
           resetNoteForm();
+          quickNoteSelectionRef.current = { start: 0, end: 0 };
           setLayoutShowDropdown(false);
           setLayoutIsCustomCategoryActive(false);
           setLayoutCustomCategoryName('');
@@ -742,7 +762,7 @@ export default function TabsLayout() {
         title="Add New Note"
         snapPoint={0.7}
       >
-        <ScrollView contentContainerStyle={[styles.formContainer, { paddingHorizontal: 16 }]} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={[styles.formContainer, { paddingHorizontal: 16 }]} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
           {/* Notion-Style Large Title Input */}
           <Controller
             control={noteControl}
@@ -943,10 +963,12 @@ export default function TabsLayout() {
                   backgroundColor: 'transparent',
                   borderWidth: 0,
                 }}
+                ref={quickNoteInputRef}
                 onBlur={onBlur}
                 onChangeText={onChange}
+                onSelectionChange={(e) => { quickNoteSelectionRef.current = e.nativeEvent.selection; }}
                 value={value}
-                placeholder="Start typing your note here..."
+                placeholder="Start typing… use the toolbar below for to-dos, headings, quotes and code."
                 placeholderTextColor={colors.textMuted}
                 multiline
               />
@@ -960,6 +982,10 @@ export default function TabsLayout() {
             style={{ marginTop: spacing.lg, marginBottom: 30 }}
           />
         </ScrollView>
+        {/* Formatting toolbar pinned to the bottom of the sheet (sits right above the keyboard) */}
+        <View style={{ paddingTop: 6 }}>
+          <NoteToolbar onAction={handleQuickNoteTool} />
+        </View>
       </BottomSheet>
 
       {/* Progress Bottom Sheet Form */}

@@ -14,6 +14,7 @@ import { scheduleTaskNotifications } from '../../src/core/notifications/notifica
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import BrandLogo from '../../src/shared/components/BrandLogo';
+import { notePreviewText } from '../../src/features/notes/markdown';
 
 // Bulletproof parser for "2026-06-28T05:43"
 const parseTime = (isoString) => {
@@ -1080,7 +1081,7 @@ export default function HomeScreen() {
                   </Text>
                   {note.content ? (
                     <Text style={{ fontSize: 11, color: colors.textSecondary, fontFamily: theme.typography.fontFamily.regular, marginTop: 2 }} numberOfLines={1}>
-                      {note.content}
+                      {notePreviewText(note.content)}
                     </Text>
                   ) : null}
                   <Text style={{ fontSize: 9, color: colors.textMuted, marginTop: 6 }}>

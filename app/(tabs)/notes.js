@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, View, Text, FlatList, Pressable, Alert, Modal, TextInput, ScrollView } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useTheme, getCategoryColor, CATEGORY_COLORS } from '../../src/core/theme/theme';
@@ -11,7 +11,15 @@ import LoadingState from '../../src/shared/components/LoadingState';
 import { selectAll, runQuery } from '../../src/core/db/sqlite';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import KeyboardSafeView from '../../src/shared/components/KeyboardSafeView';
+import KeyboardSafeView, { useKeyboardOverlap } from '../../src/shared/components/KeyboardSafeView';
+import NoteContent from '../../src/features/notes/NoteContent';
+import NoteToolbar from '../../src/features/notes/NoteToolbar';
+import {
+  toggleTodoLine,
+  applyNoteTool,
+  notePreviewText,
+  noteTodoProgress,
+} from '../../src/features/notes/markdown';
 
 export default function NotesScreen() {
   const { theme } = useTheme();
@@ -34,6 +42,12 @@ export default function NotesScreen() {
   const [editContent, setEditContent] = useState('');
   const [editCategory, setEditCategory] = useState('General');
   const [editColor, setEditColor] = useState('#6366F1');
+
+  // 'view' renders the formatted note (todos tappable); 'edit' shows the editor + toolbar
+  const [noteMode, setNoteMode] = useState('view');
+  const contentInputRef = useRef(null);
+  const selectionRef = useRef({ start: 0, end: 0 });
+  const keyboardOpen = useKeyboardOverlap() > 0;
 
   // Category Dropdown and custom category picker states
   const [showDropdown, setShowDropdown] = useState(false);
@@ -119,6 +133,9 @@ export default function NotesScreen() {
     setShowDropdown(false);
     setIsCustomCategoryActive(false);
     setCustomCategoryName('');
+    const initialContent = note.content || '';
+    selectionRef.current = { start: initialContent.length, end: initialContent.length };
+    setNoteMode(initialContent.trim() ? 'view' : 'edit');
     setIsDetailVisible(true);
 
     try {
@@ -130,28 +147,94 @@ export default function NotesScreen() {
     }
   };
 
+  const getFinalCategory = () =>
+    isCustomCategoryActive ? (customCategoryName.trim() || 'General') : editCategory;
+
+  const hasUnsavedChanges = () =>
+    !!activeNote && (
+      editTitle !== activeNote.title ||
+      editContent !== (activeNote.content || '') ||
+      editColor !== (activeNote.color || '#6366F1') ||
+      getFinalCategory() !== activeNote.category
+    );
+
   const saveNoteChanges = async () => {
     if (!editTitle.trim()) {
       Alert.alert('Validation Error', 'Note title cannot be empty.');
-      return;
+      return false;
     }
-    const finalCategory = isCustomCategoryActive ? (customCategoryName.trim() || 'General') : editCategory;
-    if (!finalCategory.trim()) {
-      Alert.alert('Validation Error', 'Category name cannot be empty.');
-      return;
-    }
+    const finalCategory = getFinalCategory();
     try {
       const sql = 'UPDATE notes SET title = ?, content = ?, category = ?, color = ?, updatedAt = ? WHERE id = ?';
       const timestamp = new Date().toISOString();
       const params = [editTitle, editContent, finalCategory, editColor, timestamp, activeNote.id];
       await runQuery(sql, params);
       triggerNotesUpdate();
-      setIsDetailVisible(false);
-      Alert.alert('Success', 'Note updated successfully.');
+      setActiveNote({ ...activeNote, title: editTitle, content: editContent, category: finalCategory, color: editColor, updatedAt: timestamp });
+      setEditCategory(finalCategory);
+      setIsCustomCategoryActive(false);
+      setNoteMode('view');
+      return true;
     } catch (e) {
       console.error(e);
       Alert.alert('Error', 'Could not save note changes.');
+      return false;
     }
+  };
+
+  // Edit -> View saves the draft (Notion-style); View -> Edit just switches
+  const switchNoteMode = async (mode) => {
+    if (mode === noteMode) return;
+    if (mode === 'view') {
+      if (hasUnsavedChanges()) await saveNoteChanges();
+      else setNoteMode('view');
+    } else {
+      setNoteMode('edit');
+    }
+  };
+
+  const closeNoteDetail = () => {
+    if (!hasUnsavedChanges()) {
+      setIsDetailVisible(false);
+      return;
+    }
+    Alert.alert('Unsaved Changes', 'Save your changes to this note?', [
+      { text: 'Discard', style: 'destructive', onPress: () => setIsDetailVisible(false) },
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Save',
+        onPress: async () => {
+          if (await saveNoteChanges()) setIsDetailVisible(false);
+        },
+      },
+    ]);
+  };
+
+  // Ticking a todo in view mode saves straight away
+  const handleToggleTodo = async (lineIndex) => {
+    const updated = toggleTodoLine(editContent, lineIndex);
+    if (updated === editContent) return;
+    setEditContent(updated);
+    try {
+      const timestamp = new Date().toISOString();
+      await runQuery('UPDATE notes SET content = ?, updatedAt = ? WHERE id = ?', [updated, timestamp, activeNote.id]);
+      setActiveNote((prev) => (prev ? { ...prev, content: updated, updatedAt: timestamp } : prev));
+      triggerNotesUpdate();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleToolbarAction = (tool) => {
+    const result = applyNoteTool(editContent, selectionRef.current, tool);
+    if (!result) return;
+    setEditContent(result.text);
+    selectionRef.current = result.selection;
+    // put the cursor where the new formatting expects typing
+    setTimeout(() => {
+      contentInputRef.current?.focus();
+      contentInputRef.current?.setSelection?.(result.selection.start, result.selection.end);
+    }, 60);
   };
 
   // Filter notes based on category and search query
@@ -207,7 +290,7 @@ export default function NotesScreen() {
               },
             ]}
           >
-            {item.content || 'No description provided.'}
+            {notePreviewText(item.content) || 'No description provided.'}
           </Text>
 
           <Text style={[styles.noteDate, { color: colors.textMuted, fontSize: 10, marginTop: spacing.sm }]}>
@@ -316,22 +399,66 @@ export default function NotesScreen() {
 
       {/* Full Screen View/Edit Modal */}
       {activeNote && (
-        <Modal visible={isDetailVisible} animationType="slide" presentationStyle="overFullScreen" onRequestClose={() => setIsDetailVisible(false)}>
+        <Modal visible={isDetailVisible} animationType="slide" presentationStyle="overFullScreen" onRequestClose={closeNoteDetail}>
           <KeyboardSafeView style={[styles.modalContainer, { backgroundColor: colors.background }]}>
             {/* Modal Header */}
             <View style={[styles.modalHeader, { borderColor: colors.border, marginTop: Math.max(12, insets.top) }]}>
-              <Pressable onPress={() => setIsDetailVisible(false)} style={styles.modalCloseBtn}>
+              <Pressable onPress={closeNoteDetail} style={styles.modalCloseBtn}>
                 <Ionicons name="chevron-back" size={24} color={colors.text} />
               </Pressable>
-              <Text style={[styles.modalTitle, { color: colors.text, fontFamily: theme.typography.fontFamily.bold }]}>
-                View & Edit Note
-              </Text>
+              {/* View / Edit toggle */}
+              <View style={[styles.modeToggle, { backgroundColor: colors.surfaceSecondary }]}>
+                {['view', 'edit'].map((mode) => {
+                  const isActive = noteMode === mode;
+                  return (
+                    <Pressable
+                      key={mode}
+                      onPress={() => switchNoteMode(mode)}
+                      style={[styles.modeToggleBtn, isActive && { backgroundColor: colors.surface }]}
+                    >
+                      <Ionicons
+                        name={mode === 'view' ? 'eye-outline' : 'create-outline'}
+                        size={14}
+                        color={isActive ? colors.primary : colors.textSecondary}
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: isActive ? colors.primary : colors.textSecondary }}>
+                        {mode === 'view' ? 'View' : 'Edit'}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
               <Pressable onPress={() => deleteNote(activeNote.id, activeNote.title)} style={styles.modalDeleteBtn}>
                 <Ionicons name="trash-outline" size={20} color={colors.error} />
               </Pressable>
             </View>
 
             <ScrollView contentContainerStyle={[styles.modalScroll, { padding: spacing.lg }]} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
+              {noteMode === 'view' ? (
+                <>
+                  <Text style={{ color: colors.text, fontFamily: theme.typography.fontFamily.bold, fontSize: 28, fontWeight: '800', lineHeight: 36, marginBottom: 10 }}>
+                    {editTitle || 'Untitled'}
+                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
+                    <View style={{ backgroundColor: `${editColor}20`, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4, marginRight: 8 }}>
+                      <Text style={{ color: editColor, fontSize: 12, fontWeight: '700' }}>{getFinalCategory()}</Text>
+                    </View>
+                    {(() => {
+                      const progress = noteTodoProgress(editContent);
+                      return progress ? (
+                        <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '600' }}>
+                          ☑ {progress.done}/{progress.total} done
+                        </Text>
+                      ) : null;
+                    })()}
+                  </View>
+                  <View style={{ height: 1, backgroundColor: colors.border, marginBottom: 16 }} />
+                  <NoteContent text={editContent} accentColor={editColor} onToggleTodo={handleToggleTodo} />
+                  <View style={{ height: 40 }} />
+                </>
+              ) : (
+              <>
               {/* Notion-Style Large Title */}
               <TextInput
                 style={[
@@ -521,9 +648,11 @@ export default function NotesScreen() {
                     textAlignVertical: 'top',
                   },
                 ]}
+                ref={contentInputRef}
                 value={editContent}
                 onChangeText={setEditContent}
-                placeholder="Start typing your note here..."
+                onSelectionChange={(e) => { selectionRef.current = e.nativeEvent.selection; }}
+                placeholder="Start typing… use the toolbar below for to-dos, headings, quotes and code."
                 placeholderTextColor={colors.textMuted}
                 multiline
               />
@@ -534,7 +663,16 @@ export default function NotesScreen() {
                 variant="primary"
                 style={{ marginTop: spacing.xl, marginBottom: 40 }}
               />
+              </>
+              )}
             </ScrollView>
+
+            {/* Formatting toolbar, pinned above the keyboard while editing */}
+            {noteMode === 'edit' && (
+              <View style={{ paddingHorizontal: spacing.md, paddingTop: 6, paddingBottom: keyboardOpen ? 4 : Math.max(insets.bottom, 8), backgroundColor: colors.background }}>
+                <NoteToolbar onAction={handleToolbarAction} />
+              </View>
+            )}
           </KeyboardSafeView>
         </Modal>
       )}
@@ -635,6 +773,18 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 16,
     fontWeight: '700',
+  },
+  modeToggle: {
+    flexDirection: 'row',
+    borderRadius: 10,
+    padding: 3,
+  },
+  modeToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 8,
   },
   modalDeleteBtn: {
     padding: 4,

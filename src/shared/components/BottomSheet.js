@@ -66,6 +66,12 @@ export default function BottomSheet({
     >
       {/* Sheet rides above the keyboard and shrinks to the space left (never under the status bar) */}
       <KeyboardSafeView style={[styles.container, { paddingTop: insets.top }]}>
+        {({ keyboardOverlap, height }) => {
+          // Space between the status bar and the keyboard (or screen bottom)
+          const availableHeight = height > 0 ? height - insets.top - keyboardOverlap : targetHeight;
+          const sheetHeight = Math.min(targetHeight, availableHeight);
+          return (
+        <>
         {/* Backdrop */}
         <Animated.View style={[styles.backdrop, { backgroundColor: '#0f172a' }, animatedBackdropStyle]}>
           <Pressable style={styles.backdropPressable} onPress={handleClose} />
@@ -76,8 +82,7 @@ export default function BottomSheet({
           style={[
             styles.sheet,
             {
-              height: targetHeight,
-              maxHeight: '100%',
+              height: sheetHeight,
               backgroundColor: colors.surface,
               borderTopLeftRadius: roundness.xl,
               borderTopRightRadius: roundness.xl,
@@ -112,10 +117,14 @@ export default function BottomSheet({
           </View>
 
           {/* Child content scrollable/view */}
-          <View style={[styles.content, { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl + insets.bottom }]}>
+          {/* With the keyboard open the sheet already sits above it, so no nav-bar padding is needed */}
+          <View style={[styles.content, { paddingHorizontal: spacing.lg, paddingBottom: keyboardOverlap ? spacing.sm : spacing.xl + insets.bottom }]}>
             {children}
           </View>
         </Animated.View>
+        </>
+          );
+        }}
       </KeyboardSafeView>
     </Modal>
   );

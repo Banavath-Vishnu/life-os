@@ -8,13 +8,10 @@
     "icon": "./assets/brand-logo.png",
     "userInterfaceStyle": "automatic",
     "splash": {
-      "image": "./assets/splash-screen.png",
+      "image": "./assets/splash-icon.png",
+      "imageWidth": 220,
       "resizeMode": "contain",
-      "backgroundColor": "#09090B"
-    },
-    "notification": {
-      "icon": "./assets/brand-logo.png",
-      "color": "#6366F1"
+      "backgroundColor": "#0D0E11"
     },
     "newArchEnabled": true,
     "ios": {
@@ -22,8 +19,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/brand-logo.png",
-        "backgroundColor": "#09090B"
+        "foregroundImage": "./assets/splash-icon.png",
+        "backgroundColor": "#0D0E11"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.vishnu_banavath.StagHaus",
@@ -38,13 +35,10 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/splash-screen.png",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 220,
           "resizeMode": "contain",
-          "backgroundColor": "#09090B",
-          "dark": {
-            "image": "./assets/splash-screen.png",
-            "backgroundColor": "#09090B"
-          }
+          "backgroundColor": "#0D0E11"
         }
       ],
       [
@@ -60,7 +54,14 @@
           }
         }
       ],
-      "expo-font"
+      "expo-font",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#D4AF37"
+        }
+      ]
     ],
     "extra": {
       "router": {},
