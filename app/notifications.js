@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Text, FlatList, Pressable, Alert } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../src/core/theme/theme';
 import { useStore } from '../src/core/store/store';
@@ -9,11 +9,14 @@ import Button from '../src/shared/components/Button';
 import EmptyState from '../src/shared/components/EmptyState';
 import LoadingState from '../src/shared/components/LoadingState';
 import { selectAll, runQuery } from '../src/core/db/sqlite';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import BrandLogo from '../src/shared/components/BrandLogo';
 
 export default function NotificationsScreen() {
   const { theme } = useTheme();
   const { colors, spacing, typography, roundness } = theme;
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   const notificationsVersion = useStore((state) => state.notificationsVersion);
   const triggerNotificationsUpdate = useStore((state) => state.triggerNotificationsUpdate);
@@ -182,13 +185,16 @@ export default function NotificationsScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Navigation Header */}
-      <View style={[styles.header, { borderColor: colors.border }]}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+      <View style={[styles.header, { borderColor: colors.border, marginTop: Math.max(12, insets.top) }]}>
+        <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} style={styles.backBtn}>
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
-        <Text style={[styles.headerTitle, { color: colors.text, fontFamily: theme.typography.fontFamily.bold }]}>
-          Notification Center
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <BrandLogo size={24} style={{ marginRight: 8 }} />
+          <Text style={[styles.headerTitle, { color: colors.text, fontFamily: theme.typography.fontFamily.bold }]}>
+            Notification Center
+          </Text>
+        </View>
         <View style={{ width: 28 }} />
       </View>
 

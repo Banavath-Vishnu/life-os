@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useColorScheme } from 'react-native';
+import { useStore } from '../store/store';
+
 
 export const lightTheme = {
   dark: false,
@@ -86,6 +88,21 @@ export const darkTheme = {
   typography: lightTheme.typography,
 };
 
+const parseTimeToMinutes = (timeStr, defaultVal) => {
+  if (!timeStr) return defaultVal;
+  try {
+    const [time, ampm] = timeStr.split(' ');
+    const [hStr, mStr] = time.split(':');
+    let h = parseInt(hStr, 10);
+    const m = parseInt(mStr, 10);
+    if (ampm === 'PM' && h !== 12) h += 12;
+    if (ampm === 'AM' && h === 12) h = 0;
+    return h * 60 + m;
+  } catch (err) {
+    return defaultVal;
+  }
+};
+
 const ThemeContext = createContext({
   theme: lightTheme,
   isDark: false,
@@ -94,44 +111,53 @@ const ThemeContext = createContext({
   themeMode: 'system',
 });
 
-export const ThemeProvider = ({ children, initialTheme }) => {
+export const ThemeProvider = ({ children }) => {
   const systemColorScheme = useColorScheme();
-  const [themeMode, setThemeModeState] = useState(initialTheme || 'system');
-  const [theme, setTheme] = useState(systemColorScheme === 'dark' ? darkTheme : lightTheme);
+  const storeThemeMode = useStore((state) => state.themeMode);
+  const storeSunriseTime = useStore((state) => state.sunriseTime);
+  const storeSunsetTime = useStore((state) => state.sunsetTime);
+
+  const [theme, setTheme] = useState(
+    storeThemeMode === 'dark' || (storeThemeMode === 'system' && systemColorScheme === 'dark')
+      ? darkTheme
+      : lightTheme
+  );
 
   useEffect(() => {
     const updateTheme = () => {
-      if (themeMode === 'system') {
-        const hour = new Date().getHours();
-        const isNightTime = hour >= 23 || hour < 4;
+      if (storeThemeMode === 'system') {
+        const now = new Date();
+        const currentMins = now.getHours() * 60 + now.getMinutes();
+        const sunriseMins = parseTimeToMinutes(storeSunriseTime, 6 * 60 + 2); // 6:02 AM
+        const sunsetMins = parseTimeToMinutes(storeSunsetTime, 19 * 60 + 24); // 7:24 PM
+
+        const isNightTime = currentMins >= sunsetMins || currentMins < sunriseMins;
         setTheme(isNightTime ? darkTheme : lightTheme);
       } else {
-        setTheme(themeMode === 'dark' ? darkTheme : lightTheme);
+        setTheme(storeThemeMode === 'dark' ? darkTheme : lightTheme);
       }
     };
 
     updateTheme();
     const interval = setInterval(updateTheme, 60000); // Check every minute
     return () => clearInterval(interval);
-  }, [themeMode, systemColorScheme]);
+  }, [storeThemeMode, systemColorScheme, storeSunriseTime, storeSunsetTime]);
 
   const toggleTheme = () => {
-    setThemeModeState((prev) => {
-      const next = prev === 'light' ? 'dark' : 'light';
-      return next;
-    });
+    const nextMode = storeThemeMode === 'light' ? 'dark' : 'light';
+    useStore.getState().setThemeMode(nextMode);
   };
 
   const setThemeMode = (mode) => {
     if (mode === 'light' || mode === 'dark' || mode === 'system') {
-      setThemeModeState(mode);
+      useStore.getState().setThemeMode(mode);
     }
   };
 
   const isDark = theme.dark;
 
   return (
-    <ThemeContext.Provider value={{ theme, isDark, toggleTheme, setThemeMode, themeMode }}>
+    <ThemeContext.Provider value={{ theme, isDark, toggleTheme, setThemeMode, themeMode: storeThemeMode }}>
       {children}
     </ThemeContext.Provider>
   );

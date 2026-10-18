@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, View, Text, Modal, Pressable, Image, Dimensions, Platform, Animated } from 'react-native';
 import { Audio } from 'expo-av';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useTheme } from '../../core/theme/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -11,37 +11,37 @@ const slidesData = [
   {
     title: '',
     text: [],
-    image: require('../../../assets/onboarding/main.png'),
+    image: require('../../../assets/onboarding/main.jpg'),
   },
   {
     title: 'THE CHASE',
     text: ['Everyone sees the lights.', 'The cars.', 'The city.', 'The lifestyle.', '', 'Almost nobody sees the chase.'],
-    image: require('../../../assets/onboarding/s1.png'),
+    image: require('../../../assets/onboarding/s1.jpg'),
   },
   {
     title: 'THE TEMPTATION',
     text: ['Anyone can find company.', 'Anyone can chase pleasure.', '', 'UltraPremiums...', 'finish the mission first.'],
-    image: require('../../../assets/onboarding/s2.png'),
+    image: require('../../../assets/onboarding/s2.jpg'),
   },
   {
     title: 'THE DISCIPLINE',
     text: ['While the city sleeps...', 'Legends keep building.', '', 'Every decision today...', 'writes tomorrow\'s reputation.'],
-    image: require('../../../assets/onboarding/s3.png'),
+    image: require('../../../assets/onboarding/s3.jpg'),
   },
   {
     title: 'THE EMPIRE',
     text: ['Respect wasn\'t given.', 'It wasn\'t bought.', 'It was earned.', '', 'One completed mission at a time.'],
-    image: require('../../../assets/onboarding/s4.png'),
+    image: require('../../../assets/onboarding/s4.jpg'),
   },
   {
     title: 'THE AURA',
     text: ['The lifestyle isn\'t the goal.', 'It\'s the consequence.', '', 'Money follows. Status follows. People follow.', 'Because discipline comes first.'],
-    image: require('../../../assets/onboarding/s5.png'),
+    image: require('../../../assets/onboarding/s5.jpg'),
   },
   {
     title: 'WELCOME',
     text: ['Every city has dreamers.', 'Every city has talkers.', 'Very few become UltraPremium.', '', 'Welcome to UltraPremium HomoSapien.', 'Complete the mission.'],
-    image: require('../../../assets/onboarding/s6.png'),
+    image: require('../../../assets/onboarding/s6.jpg'),
     isLast: true,
   },
 ];
@@ -141,6 +141,7 @@ export default function OnboardingStory({ isVisible, onClose, isForceWatch = fal
   // Load and play onboardingaudio.mp3
   useEffect(() => {
     let soundObject = null;
+    let cancelled = false;
 
     async function loadAudio() {
       if (!isVisible) return;
@@ -149,6 +150,11 @@ export default function OnboardingStory({ isVisible, onClose, isForceWatch = fal
           require('../../../assets/onboarding/onBoardingaudio.mp3'),
           { shouldPlay: true, isLooping: false }
         );
+        // Story was closed while the audio was still loading
+        if (cancelled) {
+          safeUnloadSound(playbackObject);
+          return;
+        }
         soundObject = playbackObject;
         setSound(playbackObject);
         await playbackObject.setProgressUpdateIntervalAsync(100);
@@ -212,6 +218,7 @@ export default function OnboardingStory({ isVisible, onClose, isForceWatch = fal
     loadAudio();
 
     return () => {
+      cancelled = true;
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
       }
@@ -261,6 +268,7 @@ export default function OnboardingStory({ isVisible, onClose, isForceWatch = fal
 
   const currentSlide = slidesData[activeIndex];
 
+  // Android back skips the story, except the first-run story the user must watch
   return (
     <Modal 
       visible={isVisible} 
@@ -268,6 +276,7 @@ export default function OnboardingStory({ isVisible, onClose, isForceWatch = fal
       presentationStyle="overFullScreen" 
       transparent={true} 
       statusBarTranslucent={true}
+      onRequestClose={isForceWatch ? () => {} : handleFinish}
     >
       <View style={styles.container}>
         {/* Full Screen Image with Fade + Ken Burns Zoom */}

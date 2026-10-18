@@ -1,24 +1,32 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Text, ScrollView, Switch, Alert, Modal, TextInput, Pressable, Image } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { Audio } from 'expo-av';
 import { useTheme } from '../../src/core/theme/theme';
 import { useStore } from '../../src/core/store/store';
 import Card from '../../src/shared/components/Card';
 import Button from '../../src/shared/components/Button';
 import { runQuery } from '../../src/core/db/sqlite';
+import { cancelAllScheduledNotificationsAsync } from '../../src/core/notifications/notificationManager';
+import { exportBackup, pickBackupFile, restoreBackup } from '../../src/core/db/backup';
+import { exportToExcel } from '../../src/core/db/excelExport';
 import OnboardingStory from '../../src/shared/components/OnboardingStory';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import KeyboardSafeView from '../../src/shared/components/KeyboardSafeView';
 
 export default function ProfileScreen() {
   const { theme, isDark, toggleTheme, setThemeMode } = useTheme();
   const { colors, spacing, typography, roundness } = theme;
+  const insets = useSafeAreaInsets();
 
   const user = useStore((state) => state.user);
   const updateUser = useStore((state) => state.updateUser);
 
   const notificationsEnabled = useStore((state) => state.notificationsEnabled);
   const toggleNotifications = useStore((state) => state.toggleNotifications);
+  const hapticsEnabled = useStore((state) => state.hapticsEnabled);
+  const toggleHaptics = useStore((state) => state.toggleHaptics);
   const notificationSettings = useStore((state) => state.notificationSettings);
   const updateNotificationSettings = useStore((state) => state.updateNotificationSettings);
 
@@ -58,6 +66,71 @@ export default function ProfileScreen() {
     const isSuperhero = superheroUrls.includes(user.avatar);
     return (isWebLink && !isSuperhero) ? user.avatar : '';
   });
+
+  const [isBackupBusy, setIsBackupBusy] = useState(false);
+
+  const handleExportBackup = async () => {
+    setIsBackupBusy(true);
+    try {
+      await exportBackup();
+    } catch (e) {
+      console.error(e);
+      Alert.alert('Export Failed', e.message || 'Could not create the backup file.');
+    } finally {
+      setIsBackupBusy(false);
+    }
+  };
+
+  const handleExportExcel = async () => {
+    setIsBackupBusy(true);
+    try {
+      await exportToExcel();
+    } catch (e) {
+      console.error(e);
+      Alert.alert('Export Failed', e.message || 'Could not create the Excel file.');
+    } finally {
+      setIsBackupBusy(false);
+    }
+  };
+
+  const handleImportBackup = async () => {
+    let payload;
+    try {
+      payload = await pickBackupFile();
+    } catch (e) {
+      Alert.alert('Restore Failed', e.message || 'Could not read the backup file.');
+      return;
+    }
+    if (!payload) return;
+
+    const t = payload.tables || {};
+    const count = (name) => (Array.isArray(t[name]) ? t[name].length : 0);
+    const exportedOn = payload.exportedAt ? new Date(payload.exportedAt).toLocaleString() : 'unknown date';
+
+    Alert.alert(
+      'Restore Backup?',
+      `Backup from ${exportedOn}\n\n${count('tasks')} tasks, ${count('routine')} routines, ${count('notes')} notes, ${count('expenses')} expenses, ${count('targets')} targets.\n\nThis will REPLACE all data currently on this device.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Restore',
+          style: 'destructive',
+          onPress: async () => {
+            setIsBackupBusy(true);
+            try {
+              await restoreBackup(payload);
+              Alert.alert('Restore Complete', 'Your data has been restored.');
+            } catch (e) {
+              console.error(e);
+              Alert.alert('Restore Failed', e.message || 'The backup file may be damaged.');
+            } finally {
+              setIsBackupBusy(false);
+            }
+          },
+        },
+      ]
+    );
+  };
 
   const handleSelectLocalImage = async () => {
     try {
@@ -127,6 +200,9 @@ export default function ProfileScreen() {
               await runQuery('DELETE FROM expenses');
               await runQuery('DELETE FROM targets');
 
+              // Drop alerts for the deleted tasks & routines
+              await cancelAllScheduledNotificationsAsync();
+
               // Trigger screen updates
               triggerTasksUpdate();
               triggerNotesUpdate();
@@ -167,6 +243,7 @@ export default function ProfileScreen() {
     Alert.alert('Success', 'Profile updated successfully.');
   };
 
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
@@ -178,7 +255,7 @@ export default function ProfileScreen() {
               color: colors.text,
               fontSize: typography.sizes.xxl,
               fontFamily: theme.typography.fontFamily.bold,
-              marginTop: 40,
+              marginTop: Math.max(12, insets.top),
               marginBottom: spacing.lg,
             },
           ]}
@@ -210,7 +287,7 @@ export default function ProfileScreen() {
                   {user.bio}
                 </Text>
                 <Text style={[styles.joinedText, { color: colors.textMuted, fontSize: 10, marginTop: 4 }]}>
-                  Joined LifeOS in {new Date(user.joinedAt).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+                  Joined StagHaus in {new Date(user.joinedAt).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
                 </Text>
               </View>
             </View>
@@ -264,7 +341,7 @@ export default function ProfileScreen() {
           </View>
 
           {/* Notifications toggle */}
-          <View style={styles.settingRow}>
+          <View style={[styles.settingRow, { borderColor: colors.border }]}>
             <View style={styles.settingLabelWrapper}>
               <Ionicons name="notifications-outline" size={20} color={colors.secondary} style={styles.settingIcon} />
               <Text style={[styles.settingLabel, { color: colors.text, fontSize: typography.sizes.md }]}>
@@ -276,6 +353,22 @@ export default function ProfileScreen() {
               onValueChange={handleToggleNotifications}
               trackColor={{ false: colors.border, true: colors.primary }}
               thumbColor={notificationsEnabled ? '#FFFFFF' : '#FFFFFF'}
+            />
+          </View>
+
+          {/* Haptic Feedback toggle */}
+          <View style={[styles.settingRow, { borderBottomWidth: 0 }]}>
+            <View style={styles.settingLabelWrapper}>
+              <Ionicons name="finger-print-outline" size={20} color={colors.success} style={styles.settingIcon} />
+              <Text style={[styles.settingLabel, { color: colors.text, fontSize: typography.sizes.md }]}>
+                Haptic Feedback
+              </Text>
+            </View>
+            <Switch
+              value={hapticsEnabled}
+              onValueChange={toggleHaptics}
+              trackColor={{ false: colors.border, true: colors.primary }}
+              thumbColor={hapticsEnabled ? '#FFFFFF' : '#FFFFFF'}
             />
           </View>
         </Card>
@@ -450,6 +543,62 @@ export default function ProfileScreen() {
           </Pressable>
         </Card>
 
+        {/* Backup & Restore */}
+        <Text style={[styles.sectionHeader, { color: colors.text, fontSize: typography.sizes.md, fontFamily: theme.typography.fontFamily.bold }]}>
+          Your Data
+        </Text>
+
+        <Card style={styles.settingsGroupCard}>
+          <Pressable
+            onPress={handleExportBackup}
+            disabled={isBackupBusy}
+            style={({ pressed }) => [
+              styles.settingRow,
+              pressed && { backgroundColor: `${colors.primary}10` }
+            ]}
+          >
+            <View style={styles.settingLabelWrapper}>
+              <Ionicons name="cloud-upload-outline" size={20} color={colors.primary} style={styles.settingIcon} />
+              <Text style={[styles.settingLabel, { color: colors.text, fontSize: typography.sizes.md }]}>
+                Export Backup
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          </Pressable>
+          <Pressable
+            onPress={handleImportBackup}
+            disabled={isBackupBusy}
+            style={({ pressed }) => [
+              styles.settingRow,
+              pressed && { backgroundColor: `${colors.primary}10` }
+            ]}
+          >
+            <View style={styles.settingLabelWrapper}>
+              <Ionicons name="cloud-download-outline" size={20} color={colors.primary} style={styles.settingIcon} />
+              <Text style={[styles.settingLabel, { color: colors.text, fontSize: typography.sizes.md }]}>
+                Restore from Backup
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          </Pressable>
+          <Pressable
+            onPress={handleExportExcel}
+            disabled={isBackupBusy}
+            style={({ pressed }) => [
+              styles.settingRow,
+              pressed && { backgroundColor: `${colors.primary}10` }
+            ]}
+          >
+            <View style={styles.settingLabelWrapper}>
+              <Ionicons name="grid-outline" size={20} color={colors.success} style={styles.settingIcon} />
+              <Text style={[styles.settingLabel, { color: colors.text, fontSize: typography.sizes.md }]}>
+                Export to Excel
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          </Pressable>
+        </Card>
+
         {/* Danger Zone */}
         <Text style={[styles.sectionHeader, { color: colors.error, fontSize: typography.sizes.md, fontFamily: theme.typography.fontFamily.bold }]}>
           Danger Zone
@@ -469,12 +618,13 @@ export default function ProfileScreen() {
             size="sm"
             style={styles.clearBtn}
           />
+
         </Card>
 
         {/* Footer Branding */}
         <View style={styles.footer}>
           <Text style={[styles.footerText, { color: colors.textMuted, fontSize: 10 }]}>
-            LifeOS Version 1.0.0
+            StagHaus Version 1.0.0
           </Text>
           <Text style={[styles.footerTextSub, { color: colors.textMuted, fontSize: 10 }]}>
             For Ultra-Premium HomoSepians
@@ -491,10 +641,10 @@ export default function ProfileScreen() {
       />
 
       {/* Edit Profile Modal */}
-      <Modal visible={isProfileModalVisible} animationType="slide" presentationStyle="overFullScreen">
-        <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+      <Modal visible={isProfileModalVisible} animationType="slide" presentationStyle="overFullScreen" onRequestClose={() => setIsProfileModalVisible(false)}>
+        <KeyboardSafeView style={[styles.modalContainer, { backgroundColor: colors.background }]}>
           {/* Modal Header */}
-          <View style={[styles.modalHeader, { borderColor: colors.border }]}>
+          <View style={[styles.modalHeader, { borderColor: colors.border, marginTop: Math.max(12, insets.top) }]}>
             <Pressable onPress={() => setIsProfileModalVisible(false)} style={styles.modalCloseBtn}>
               <Ionicons name="chevron-back" size={24} color={colors.text} />
             </Pressable>
@@ -504,7 +654,7 @@ export default function ProfileScreen() {
             <View style={{ width: 24 }} />
           </View>
 
-          <ScrollView contentContainerStyle={[styles.modalScroll, { padding: spacing.lg }]} showsVerticalScrollIndicator={false}>
+          <ScrollView contentContainerStyle={[styles.modalScroll, { padding: spacing.lg }]} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
             {/* User Name */}
             <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Full Name</Text>
             <TextInput
@@ -634,7 +784,7 @@ export default function ProfileScreen() {
               style={{ marginTop: spacing.xl }}
             />
           </ScrollView>
-        </View>
+        </KeyboardSafeView>
       </Modal>
     </View>
   );

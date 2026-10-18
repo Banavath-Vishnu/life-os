@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Text, Pressable, Modal } from 'react-native';
 import Svg, { Line, Circle } from 'react-native-svg';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useTheme } from '../../core/theme/theme';
 
 export default function TimePickerModal({ isVisible, onClose, onConfirm, initialTime }) {

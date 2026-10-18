@@ -21,6 +21,10 @@ export const useStore = create(
       // App Theme Configuration (MMKV persisted)
       themeMode: 'system', // 'system' | 'light' | 'dark'
       setThemeMode: (mode) => set({ themeMode: mode }),
+      sunriseTime: '6:02 AM',
+      sunsetTime: '7:24 PM',
+      setSunriseTime: (time) => set({ sunriseTime: time }),
+      setSunsetTime: (time) => set({ sunsetTime: time }),
 
       notificationSettings: {
         routineOffset: 5,     // minutes before: 0, 5, 15, 30, null (disabled)
@@ -38,6 +42,9 @@ export const useStore = create(
       notificationsEnabled: true,
       toggleNotifications: () =>
         set((state) => ({ notificationsEnabled: !state.notificationsEnabled })),
+      hapticsEnabled: true,
+      toggleHaptics: () =>
+        set((state) => ({ hapticsEnabled: !state.hapticsEnabled })),
 
       // Temporary Dashboard / Cache states (non-db backed transient variables)
       quickStats: {
@@ -77,9 +84,20 @@ export const useStore = create(
       progressSubTab: 'expenses',
       setProgressSubTab: (tab) => set({ progressSubTab: tab }),
 
+      // User-created expense categories (persisted)
+      customExpenseCategories: [],
+      addExpenseCategory: (name) =>
+        set((state) => ({ customExpenseCategories: [...state.customExpenseCategories, name] })),
+      removeExpenseCategory: (name) =>
+        set((state) => ({ customExpenseCategories: state.customExpenseCategories.filter((c) => c !== name) })),
+
       // Calendar prefill bridge
       prefilledDate: '',
       setPrefilledDate: (date) => set({ prefilledDate: date }),
+
+      // Day currently viewed on the Tasks screen (used by the tab bar "+")
+      tasksSelectedDate: '',
+      setTasksSelectedDate: (date) => set({ tasksSelectedDate: date }),
     }),
     {
       name: 'lifeos-app-state',
@@ -89,6 +107,11 @@ export const useStore = create(
         user: state.user,
         themeMode: state.themeMode,
         notificationsEnabled: state.notificationsEnabled,
+        hapticsEnabled: state.hapticsEnabled,
+        sunriseTime: state.sunriseTime,
+        sunsetTime: state.sunsetTime,
+        notificationSettings: state.notificationSettings,
+        customExpenseCategories: state.customExpenseCategories,
       }),
     }
   )

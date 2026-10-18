@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Text, FlatList, Pressable, Alert, Modal, TextInput, ScrollView } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useTheme, getCategoryColor, CATEGORY_COLORS } from '../../src/core/theme/theme';
 import { useStore } from '../../src/core/store/store';
 import SearchBar from '../../src/shared/components/SearchBar';
@@ -8,11 +9,14 @@ import Button from '../../src/shared/components/Button';
 import EmptyState from '../../src/shared/components/EmptyState';
 import LoadingState from '../../src/shared/components/LoadingState';
 import { selectAll, runQuery } from '../../src/core/db/sqlite';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import KeyboardSafeView from '../../src/shared/components/KeyboardSafeView';
 
 export default function NotesScreen() {
   const { theme } = useTheme();
   const { colors, spacing, typography, roundness } = theme;
+  const insets = useSafeAreaInsets();
 
   const notesVersion = useStore((state) => state.notesVersion);
   const triggerNotesUpdate = useStore((state) => state.triggerNotesUpdate);
@@ -50,7 +54,7 @@ export default function NotesScreen() {
 
   const loadNotes = async () => {
     try {
-      const data = await selectAll('SELECT * FROM notes ORDER BY id DESC');
+      const data = await selectAll('SELECT * FROM notes ORDER BY updatedAt DESC');
       setNotes(data || []);
     } catch (e) {
       console.warn('[Notes Screen] Error loading notes: ', e);
@@ -69,6 +73,19 @@ export default function NotesScreen() {
       setSelectedCategory('All');
     }
   }, [notes, selectedCategory]);
+
+  const { openNoteId } = useLocalSearchParams();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (openNoteId && notes.length > 0) {
+      const matchedNote = notes.find(n => String(n.id) === String(openNoteId));
+      if (matchedNote) {
+        openNoteDetail(matchedNote);
+        router.setParams({ openNoteId: undefined });
+      }
+    }
+  }, [openNoteId, notes]);
 
   const deleteNote = async (id, title) => {
     Alert.alert(
@@ -93,7 +110,7 @@ export default function NotesScreen() {
     );
   };
 
-  const openNoteDetail = (note) => {
+  const openNoteDetail = async (note) => {
     setActiveNote(note);
     setEditTitle(note.title);
     setEditContent(note.content || '');
@@ -103,6 +120,14 @@ export default function NotesScreen() {
     setIsCustomCategoryActive(false);
     setCustomCategoryName('');
     setIsDetailVisible(true);
+
+    try {
+      const timestamp = new Date().toISOString();
+      await runQuery('UPDATE notes SET updatedAt = ? WHERE id = ?', [timestamp, note.id]);
+      triggerNotesUpdate();
+    } catch (e) {
+      console.warn('[Notes] Failed to update access timestamp:', e);
+    }
   };
 
   const saveNoteChanges = async () => {
@@ -171,7 +196,7 @@ export default function NotesScreen() {
           </Text>
 
           <Text
-            numberOfLines={4}
+            numberOfLines={1}
             style={[
               styles.noteContent,
               {
@@ -200,7 +225,7 @@ export default function NotesScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header Title Row */}
-      <View style={[styles.headerRow, { paddingHorizontal: spacing.lg, marginBottom: spacing.md }]}>
+      <View style={[styles.headerRow, { paddingHorizontal: spacing.lg, marginBottom: spacing.md, marginTop: Math.max(12, insets.top) }]}>
         <Text
           style={[
             styles.screenTitle,
@@ -213,9 +238,6 @@ export default function NotesScreen() {
         >
           My Notes
         </Text>
-        <Pressable onPress={() => setActiveSheet('note')} style={styles.headerAddBtn}>
-          <Ionicons name="add-circle-outline" size={28} color={colors.primary} />
-        </Pressable>
       </View>
 
       {/* Search Input bar */}
@@ -294,10 +316,10 @@ export default function NotesScreen() {
 
       {/* Full Screen View/Edit Modal */}
       {activeNote && (
-        <Modal visible={isDetailVisible} animationType="slide" presentationStyle="overFullScreen">
-          <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+        <Modal visible={isDetailVisible} animationType="slide" presentationStyle="overFullScreen" onRequestClose={() => setIsDetailVisible(false)}>
+          <KeyboardSafeView style={[styles.modalContainer, { backgroundColor: colors.background }]}>
             {/* Modal Header */}
-            <View style={[styles.modalHeader, { borderColor: colors.border }]}>
+            <View style={[styles.modalHeader, { borderColor: colors.border, marginTop: Math.max(12, insets.top) }]}>
               <Pressable onPress={() => setIsDetailVisible(false)} style={styles.modalCloseBtn}>
                 <Ionicons name="chevron-back" size={24} color={colors.text} />
               </Pressable>
@@ -309,7 +331,7 @@ export default function NotesScreen() {
               </Pressable>
             </View>
 
-            <ScrollView contentContainerStyle={[styles.modalScroll, { padding: spacing.lg }]} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <ScrollView contentContainerStyle={[styles.modalScroll, { padding: spacing.lg }]} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
               {/* Notion-Style Large Title */}
               <TextInput
                 style={[
@@ -349,7 +371,7 @@ export default function NotesScreen() {
                     ]}
                   >
                     <Text style={[styles.notionSelectPillText, { color: categoryColors[editCategory] || colors.primary }]}>
-                      {isCustomCategoryActive ? 'Others...' : editCategory}
+                      {isCustomCategoryActive ? (customCategoryName.trim() || 'Custom...') : editCategory}
                     </Text>
                     <Ionicons name="chevron-down" size={10} color={categoryColors[editCategory] || colors.primary} style={{ marginLeft: 4 }} />
                   </Pressable>
@@ -513,7 +535,7 @@ export default function NotesScreen() {
                 style={{ marginTop: spacing.xl, marginBottom: 40 }}
               />
             </ScrollView>
-          </View>
+          </KeyboardSafeView>
         </Modal>
       )}
     </View>

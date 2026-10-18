@@ -14,7 +14,7 @@ export const taskFormSchema = z.object({
     .or(z.literal('')),
   priority: z
     .enum(['low', 'medium', 'high'], {
-      errorMap: () => ({ message: 'Priority must be low, medium, or high' }),
+      error: 'Priority must be low, medium, or high',
     })
     .default('medium'),
   dueDate: z

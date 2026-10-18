@@ -9,7 +9,7 @@ export const progressLogSchema = z.object({
   value: z
     .preprocess(
       (val) => (val === '' ? undefined : Number(val)),
-      z.number({ invalid_type_error: 'Value must be a number' })
+      z.number({ error: 'Value must be a number' })
     ),
   notes: z
     .string()

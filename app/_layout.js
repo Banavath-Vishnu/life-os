@@ -4,6 +4,7 @@ import { View, StyleSheet, Text, ActivityIndicator, Pressable, ScrollView, Image
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import * as SplashScreen from 'expo-splash-screen';
 import { ThemeProvider, useTheme } from '../src/core/theme/theme';
 import { initDb, selectAll } from '../src/core/db/sqlite';
 import { useStore } from '../src/core/store/store';
@@ -15,11 +16,16 @@ import {
   registerForPushNotificationsAsync,
   cancelAllScheduledNotificationsAsync
 } from '../src/core/notifications/notificationManager';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import * as ImagePicker from 'expo-image-picker';
 import Button from '../src/shared/components/Button';
 import Input from '../src/shared/components/Input';
+import KeyboardSafeView from '../src/shared/components/KeyboardSafeView';
 import OnboardingStory from '../src/shared/components/OnboardingStory';
+import BrandLogo from '../src/shared/components/BrandLogo';
+
+// Prevent the splash screen from auto-hiding before database is fully initialized
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 function RootLayoutContent() {
   const { theme, isDark } = useTheme();
@@ -104,22 +110,25 @@ function RootLayoutContent() {
     let unsubscribeNotifications = () => {};
     async function startApp() {
       try {
-        console.log('[LifeOS Root] Initializing database...');
+        console.log('[StagHaus Root] Initializing database...');
         await initDb();
         
         // Request OS push notification permissions
         const hasPermissions = await requestNotificationPermissions();
-        console.log('[LifeOS Root] OS Push notifications granted:', hasPermissions);
+        console.log('[StagHaus Root] OS Push notifications granted:', hasPermissions);
         
         // Start foreground & tap listeners
         unsubscribeNotifications = registerNotificationListeners();
         
-        // Fetch remote push notification token (in Dev / Prod only, skipped in Expo Go)
-        await registerForPushNotificationsAsync();
-        
         setDbReady(true);
+
+        // Fetch remote push notification token (in Dev / Prod only, skipped in Expo Go).
+        // Not awaited: a slow network must not hold the splash screen.
+        registerForPushNotificationsAsync().catch((err) => {
+          console.warn('[StagHaus Root] Push token registration failed:', err);
+        });
       } catch (err) {
-        console.error('[LifeOS Root] Failed to boot database or notification listeners:', err);
+        console.error('[StagHaus Root] Failed to boot database or notification listeners:', err);
         // Allow app to continue
         setDbReady(true);
       }
@@ -128,55 +137,57 @@ function RootLayoutContent() {
     return () => unsubscribeNotifications();
   }, []);
 
+  // Hide splash screen once database and services are ready
+  useEffect(() => {
+    if (dbReady) {
+      SplashScreen.hideAsync().catch((err) => {
+        console.warn('[StagHaus Root] Error hiding splash screen:', err);
+      });
+    }
+  }, [dbReady]);
+
   // Global Notification Rescheduler (re-fires when offsets or master switch changes)
   useEffect(() => {
     if (!dbReady) return;
+    let cancelled = false;
     
     async function rescheduleAllAlerts() {
       try {
-        if (!notificationsEnabled) {
-          await cancelAllScheduledNotificationsAsync();
+        // Clear everything first so alerts for deleted items don't linger
+        await cancelAllScheduledNotificationsAsync();
+        if (!notificationsEnabled || cancelled) {
           return;
         }
 
-        console.log('[LifeOS Root] Master notifications active. Rescheduling all alerts...');
+        console.log('[StagHaus Root] Master notifications active. Rescheduling all alerts...');
         
         // Query active tasks
         const allTasks = await selectAll("SELECT * FROM tasks WHERE status = 'pending'");
         for (const task of allTasks) {
+          if (cancelled) return;
           await scheduleTaskNotifications(task, notificationSettings);
         }
 
         // Query routines
         const allRoutines = await selectAll("SELECT * FROM routine");
         for (const r of allRoutines) {
+          if (cancelled) return;
           await scheduleRoutineNotifications(r, notificationSettings);
         }
         
-        console.log('[LifeOS Root] Successfully scheduled tasks & routines.');
+        console.log('[StagHaus Root] Successfully scheduled tasks & routines.');
       } catch (err) {
-        console.warn('[LifeOS Root] Rescheduling notification alerts failed:', err);
+        console.warn('[StagHaus Root] Rescheduling notification alerts failed:', err);
       }
     }
     
     rescheduleAllAlerts();
+    return () => { cancelled = true; };
   }, [dbReady, notificationsEnabled, notificationSettings]);
 
   if (!dbReady) {
-    // Beautiful premium splash loader
-    return (
-      <View style={[styles.splashContainer, { backgroundColor: isDark ? '#09090B' : '#F8FAFC' }]}>
-        <View style={styles.brandingWrapper}>
-          <Text style={[styles.splashTitle, { color: isDark ? '#F4F4F5' : '#0F172A' }]}>
-            Life<Text style={{ color: '#6366F1' }}>OS</Text>
-          </Text>
-          <Text style={[styles.splashSubtitle, { color: isDark ? '#71717A' : '#64748B' }]}>
-            Quantified Self & Productivity
-          </Text>
-        </View>
-        <ActivityIndicator size="large" color="#6366F1" style={{ marginTop: 40 }} />
-      </View>
-    );
+    // Keep splash screen visible until database is ready
+    return null;
   }
 
   // Intercept boot flow for new users needing profile onboarding setup
@@ -184,10 +195,12 @@ function RootLayoutContent() {
     return (
       <SafeAreaProvider style={{ backgroundColor: colors.background }}>
         <StatusBar style={isDark ? 'light' : 'dark'} />
-        <ScrollView contentContainerStyle={[styles.onboardScroll, { backgroundColor: colors.background }]} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        <KeyboardSafeView style={{ backgroundColor: colors.background }}>
+        <ScrollView contentContainerStyle={[styles.onboardScroll, { backgroundColor: colors.background }]} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
           <View style={styles.onboardHeader}>
+            <BrandLogo size={100} style={{ marginBottom: 16 }} />
             <Text style={[styles.onboardAppTitle, { color: isDark ? '#F4F4F5' : '#0F172A' }]}>
-              Welcome to Life<Text style={{ color: '#6366F1' }}>OS</Text>
+              Welcome to Stag<Text style={{ color: '#6366F1' }}>Haus</Text>
             </Text>
             <Text style={[styles.onboardAppSubtitle, { color: colors.textSecondary }]}>
               Let's personalize your quantified self workspace.
@@ -213,7 +226,7 @@ function RootLayoutContent() {
             />
 
             <Input
-              label="Reason for being here *"
+              label="Reason for being here (Optional)"
               placeholder="e.g. To build a multi-million dollar empire"
               value={onboardBio}
               onChangeText={setOnboardBio}
@@ -259,6 +272,7 @@ function RootLayoutContent() {
             />
           </View>
         </ScrollView>
+        </KeyboardSafeView>
 
         <OnboardingStory 
           isVisible={showOnboardStory} 

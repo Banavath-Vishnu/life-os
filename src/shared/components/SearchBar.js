@@ -1,6 +1,6 @@
 import React from 'react';
 import { StyleSheet, View, TextInput, Pressable } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useTheme } from '../../core/theme/theme';
 
 export default function SearchBar({

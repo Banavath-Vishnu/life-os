@@ -41,6 +41,13 @@ export async function initDb() {
       // Column already exists, ignore error safely
     }
 
+    // Ensure the completedDate column exists in the tasks table (safe alter schema check)
+    try {
+      await db.execAsync("ALTER TABLE tasks ADD COLUMN completedDate TEXT");
+    } catch (e) {
+      // Column already exists, ignore error safely
+    }
+
     // Create Notes table
     await db.execAsync(`
       CREATE TABLE IF NOT EXISTS notes (
@@ -134,6 +141,28 @@ export async function initDb() {
       );
     `);
 
+    // Ensure the stepTexts column exists in the targets table (safe alter schema check)
+    try {
+      await db.execAsync("ALTER TABLE targets ADD COLUMN stepTexts TEXT");
+    } catch (e) {
+      // Column already exists, ignore error safely
+    }
+
+    // Per-step completion flags (JSON boolean array) for independently ticked steps
+    try {
+      await db.execAsync("ALTER TABLE targets ADD COLUMN stepsDone TEXT");
+    } catch (e) {
+      // Column already exists, ignore error safely
+    }
+
+    // Step sync mode: 1 = ticking a step completes every step before it, 0 = steps are independent
+    try {
+      await db.execAsync("ALTER TABLE targets ADD COLUMN syncSteps INTEGER NOT NULL DEFAULT 1");
+    } catch (e) {
+      // Column already exists, ignore error safely
+    }
+
+
     // Create Notifications table
     await db.execAsync(`
       CREATE TABLE IF NOT EXISTS notifications (
@@ -146,10 +175,10 @@ export async function initDb() {
       );
     `);
 
-    console.log('[LifeOS DB] Tables initialized successfully.');
+    console.log('[StagHaus DB] Tables initialized successfully.');
     return db;
   } catch (error) {
-    console.error('[LifeOS DB] Failed to initialize SQLite database:', error);
+    console.error('[StagHaus DB] Failed to initialize SQLite database:', error);
     throw error;
   }
 }
@@ -163,7 +192,7 @@ export async function runQuery(sql, params = []) {
     const result = await db.runAsync(sql, params);
     return result;
   } catch (error) {
-    console.error(`[LifeOS DB] Error running write query: ${sql}`, error);
+    console.error(`[StagHaus DB] Error running write query: ${sql}`, error);
     throw error;
   }
 }
@@ -177,7 +206,15 @@ export async function selectAll(sql, params = []) {
     const rows = await db.getAllAsync(sql, params);
     return rows;
   } catch (error) {
-    console.error(`[LifeOS DB] Error running select query: ${sql}`, error);
+    console.error(`[StagHaus DB] Error running select query: ${sql}`, error);
     throw error;
   }
+}
+
+/**
+ * Runs the given async function inside a single transaction (rolled back if it throws).
+ */
+export async function withTransaction(task) {
+  if (!db) await initDb();
+  await db.withTransactionAsync(task);
 }

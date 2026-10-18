@@ -15,12 +15,12 @@ try {
   const { MMKV } = require('react-native-mmkv');
   storage = new MMKV({ id: 'lifeos-storage' });
   isMMKVAvailable = true;
-  console.log('[LifeOS DB] MMKV initialized successfully.');
+  console.log('[StagHaus DB] MMKV initialized successfully.');
 } catch (e) {
   if (isExpoGo) {
-    console.log('[LifeOS DB] Running in Expo Go client. Activating in-memory storage fallback.');
+    console.log('[StagHaus DB] Running in Expo Go client. Activating in-memory storage fallback.');
   } else {
-    console.warn('[LifeOS DB] MMKV is not available. Falling back to in-memory shim:', e.message);
+    console.warn('[StagHaus DB] MMKV is not available. Falling back to in-memory shim:', e.message);
   }
   
   const memoryStore = new Map();
@@ -66,7 +66,7 @@ export const zustandStorage = {
     try {
       storage.set(name, value);
     } catch (e) {
-      console.error('[LifeOS Storage] Failed to set item in storage:', e);
+      console.error('[StagHaus Storage] Failed to set item in storage:', e);
     }
   },
   getItem: (name) => {
@@ -74,7 +74,7 @@ export const zustandStorage = {
       const value = storage.getString(name);
       return value ?? null;
     } catch (e) {
-      console.error('[LifeOS Storage] Failed to get item from storage:', e);
+      console.error('[StagHaus Storage] Failed to get item from storage:', e);
       return null;
     }
   },
@@ -82,7 +82,7 @@ export const zustandStorage = {
     try {
       storage.delete(name);
     } catch (e) {
-      console.error('[LifeOS Storage] Failed to remove item from storage:', e);
+      console.error('[StagHaus Storage] Failed to remove item from storage:', e);
     }
   },
 };

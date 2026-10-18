@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Tabs } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { Tabs, usePathname } from 'expo-router';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useTheme, getCategoryColor, CATEGORY_COLORS } from '../../src/core/theme/theme';
 import BottomSheet from '../../src/shared/components/BottomSheet';
 import Button from '../../src/shared/components/Button';
@@ -16,12 +16,14 @@ import { runQuery, selectAll } from '../../src/core/db/sqlite';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useStore } from '../../src/core/store/store';
 import { scheduleTaskNotifications, scheduleRoutineNotifications } from '../../src/core/notifications/notificationManager';
+import { getLocalTodayStr, getLocalISOString } from '../../src/core/utils/date';
 import { z } from 'zod';
+import { getExpenseCategories, isDefaultExpenseCategory, MAX_CATEGORY_NAME_LENGTH } from '../../src/features/progress/categories';
 
 // Routine Item Schema
 const routineFormSchema = z.object({
   title: z.string().trim().min(1, { message: 'Routine title is required' }),
-  time: z.string().trim().regex(/^([0-9]|0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]$/, { message: 'Time must be in HH:MM format' }),
+  time: z.string().trim().regex(/^([0-9]|0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]$/, { message: 'Time must be in HH:MM format' }).optional().or(z.literal('')),
   details: z.string().trim().optional(),
   frequency: z.string().trim().default('daily'),
   endTime: z.string().trim().optional().or(z.literal('')),
@@ -32,7 +34,7 @@ const expenseFormSchema = z.object({
   title: z.string().trim().min(1, { message: 'Merchant/Item title is required' }),
   amount: z.preprocess(
     (val) => (val === '' ? undefined : Number(val)),
-    z.number({ invalid_type_error: 'Amount must be a number' }).positive({ message: 'Amount must be positive' })
+    z.number({ error: 'Amount must be a number' }).positive({ message: 'Amount must be positive' })
   ),
   category: z.string().trim().min(1, { message: 'Category is required' }),
 });
@@ -43,7 +45,7 @@ const targetFormSchema = z.object({
   category: z.string().trim().min(1, { message: 'Category is required' }),
   totalCount: z.preprocess(
     (val) => (val === '' ? undefined : Number(val)),
-    z.number({ invalid_type_error: 'Total steps must be a number' }).int().positive({ message: 'Total must be positive' })
+    z.number({ error: 'Total steps must be a number' }).int().positive({ message: 'Total must be positive' })
   ),
   dueDate: z.string().trim().min(1, { message: 'Due date is required' }),
 });
@@ -57,8 +59,87 @@ export default function TabsLayout() {
   const prefilledDate = useStore((state) => state.prefilledDate);
   const setPrefilledDate = useStore((state) => state.setPrefilledDate);
   const user = useStore((state) => state.user);
+  const pathname = usePathname();
+
+  // Center "+" adds an item for the current tab; Home/Profile keep the Quick Add menu
+  const handlePlusPress = () => {
+    const { tasksSubTab, progressSubTab, tasksSelectedDate } = useStore.getState();
+    if (pathname.startsWith('/notes')) {
+      setActiveSheet('note');
+    } else if (pathname.startsWith('/tasks')) {
+      if (tasksSelectedDate && tasksSelectedDate < getLocalTodayStr()) {
+        Alert.alert('Restricted Action', 'Adding tasks/routines for past dates is disabled.');
+        return;
+      }
+      setPrefilledDate(tasksSelectedDate || getLocalTodayStr()); // create on the day being viewed
+      setActiveSheet(tasksSubTab === 'routine' ? 'routine' : 'task');
+    } else if (pathname.startsWith('/progress')) {
+      setPrefilledDate('');
+      setActiveSheet(progressSubTab === 'targets' ? 'target' : 'expense');
+    } else {
+      setPrefilledDate('');
+      setActiveSheet('quick_add');
+    }
+  };
 
   const [timePickerTarget, setTimePickerTarget] = useState(null);
+
+  // Expense categories (built-in + user-created)
+  const customExpenseCategories = useStore((state) => state.customExpenseCategories);
+  const addExpenseCategory = useStore((state) => state.addExpenseCategory);
+  const removeExpenseCategory = useStore((state) => state.removeExpenseCategory);
+  const [isAddingExpenseCategory, setIsAddingExpenseCategory] = useState(false);
+  const [newExpenseCategoryName, setNewExpenseCategoryName] = useState('');
+  const expenseCategoryOptions = getExpenseCategories(customExpenseCategories);
+
+  const handleCreateExpenseCategory = (onChange) => {
+    const name = newExpenseCategoryName.trim();
+    if (!name) {
+      Alert.alert('Category Name', 'Please enter a name for the new category.');
+      return;
+    }
+    if (name.length > MAX_CATEGORY_NAME_LENGTH) {
+      Alert.alert('Category Name', `Keep it to ${MAX_CATEGORY_NAME_LENGTH} characters or fewer.`);
+      return;
+    }
+    const existing = expenseCategoryOptions.find((c) => c.toLowerCase() === name.toLowerCase());
+    if (!existing) addExpenseCategory(name);
+    onChange(existing || name);
+    setNewExpenseCategoryName('');
+    setIsAddingExpenseCategory(false);
+  };
+
+  const handleRemoveExpenseCategory = (name, value, onChange) => {
+    if (isDefaultExpenseCategory(name)) return;
+    Alert.alert(
+      'Remove Category',
+      `Remove "${name}" from the list? Expenses already logged under it keep their category.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            removeExpenseCategory(name);
+            if (value === name) onChange('Food & Dining');
+          },
+        },
+      ]
+    );
+  };
+
+  // Rendered inside each sheet that needs it (a sibling Modal can't open over a sheet on iOS)
+  const renderTimePicker = () => (
+    <TimePickerModal
+      isVisible={timePickerTarget !== null}
+      initialTime={timePickerTarget?.value || new Date().toTimeString().slice(0, 5)}
+      onClose={() => setTimePickerTarget(null)}
+      onConfirm={(selectedTime) => {
+        timePickerTarget?.onChange(selectedTime);
+        setTimePickerTarget(null);
+      }}
+    />
+  );
   const [showTaskTime, setShowTaskTime] = useState(false);
 
   // Zustand version triggers
@@ -76,7 +157,7 @@ export default function TabsLayout() {
         title: '',
         description: '',
         priority: 'medium',
-        dueDate: prefilledDate || new Date().toISOString().split('T')[0],
+        dueDate: prefilledDate || getLocalTodayStr(),
         startTime: '',
         endTime: ''
       });
@@ -178,7 +259,7 @@ export default function TabsLayout() {
         data.title,
         data.description || '',
         data.priority,
-        data.dueDate || new Date().toISOString().split('T')[0],
+        data.dueDate || getLocalTodayStr(),
         data.startTime || null,
         data.endTime || null,
         new Date().toISOString(),
@@ -190,7 +271,7 @@ export default function TabsLayout() {
       const taskObject = {
         id: insertedId,
         title: data.title,
-        dueDate: data.dueDate || new Date().toISOString().split('T')[0],
+        dueDate: data.dueDate || getLocalTodayStr(),
         startTime: data.startTime || null,
         endTime: data.endTime || null,
         status: 'pending'
@@ -204,6 +285,7 @@ export default function TabsLayout() {
       triggerTasksUpdate();
       Alert.alert('Task Created', `"${data.title}" has been saved successfully.`);
       resetTaskForm();
+      setPrefilledDate('');
       setActiveSheet(null);
     } catch (e) {
       console.error(e);
@@ -234,7 +316,7 @@ export default function TabsLayout() {
   const onProgressLog = async (data) => {
     try {
       const sql = 'INSERT INTO progress_logs (metricName, value, logDate, notes) VALUES (?, ?, ?, ?)';
-      const params = [data.metricName, data.value, new Date().toISOString().split('T')[0], data.notes || ''];
+      const params = [data.metricName, data.value, getLocalTodayStr(), data.notes || ''];
       await runQuery(sql, params);
       triggerProgressUpdate();
       Alert.alert('Progress Logged', `Logged ${data.value} for ${data.metricName} successfully.`);
@@ -250,10 +332,11 @@ export default function TabsLayout() {
     try {
       const sql = 'INSERT INTO routine (title, time, details, frequency, scheduledDate, endTime, status, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
       const timestamp = new Date().toISOString();
-      const schedDate = data.frequency === 'once' ? (prefilledDate || new Date().toISOString().split('T')[0]) : null;
+      // Weekly/monthly routines also need an anchor date for their weekday / day-of-month
+      const schedDate = prefilledDate || getLocalTodayStr();
       const res = await runQuery(sql, [
         data.title,
-        data.time,
+        data.time || '', // no start time = all-day routine
         data.details || '',
         data.frequency || 'daily',
         schedDate,
@@ -267,7 +350,7 @@ export default function TabsLayout() {
       const routineObject = {
         id: insertedId,
         title: data.title,
-        time: data.time,
+        time: data.time || '',
         frequency: data.frequency || 'daily',
         scheduledDate: schedDate,
         endTime: data.endTime || null
@@ -281,6 +364,7 @@ export default function TabsLayout() {
       triggerRoutineUpdate();
       Alert.alert('Routine Item Added', `"${data.title}" added to daily routine.`);
       resetRoutineForm();
+      setPrefilledDate('');
       setActiveSheet(null);
     } catch (e) {
       console.error(e);
@@ -291,11 +375,14 @@ export default function TabsLayout() {
   const onExpenseCreate = async (data) => {
     try {
       const sql = 'INSERT INTO expenses (title, amount, category, date) VALUES (?, ?, ?, ?)';
-      const timestamp = new Date().toISOString();
+      const timestamp = prefilledDate 
+        ? `${prefilledDate}T12:00:00`
+        : getLocalISOString();
       await runQuery(sql, [data.title, data.amount, data.category, timestamp]);
       triggerExpensesUpdate();
-      Alert.alert('Expense Logged', `Spent $${data.amount} on "${data.title}" successfully.`);
+      Alert.alert('Expense Logged', `Spent ₹${data.amount} on "${data.title}" successfully.`);
       resetExpenseForm();
+      setPrefilledDate('');
       setActiveSheet(null);
     } catch (e) {
       console.error(e);
@@ -320,6 +407,7 @@ export default function TabsLayout() {
   return (
     <View style={{ flex: 1 }}>
       <Tabs
+        backBehavior="history"
         screenOptions={{
           headerShown: false,
           tabBarActiveTintColor: colors.primary,
@@ -377,7 +465,7 @@ export default function TabsLayout() {
                 />
                 <Pressable
                   {...props}
-                  onPress={() => setActiveSheet('quick_add')}
+                  onPress={handlePlusPress}
                   style={styles.centerTabBtn}
                 >
                   <View style={[styles.centerTabCircle, { backgroundColor: '#F1C40F' }]}>
@@ -527,12 +615,13 @@ export default function TabsLayout() {
         isVisible={activeSheet === 'task'}
         onClose={() => {
           setActiveSheet(null);
+          setPrefilledDate('');
           resetTaskForm();
         }}
         title="Add New Task"
         snapPoint={0.65}
       >
-        <ScrollView contentContainerStyle={styles.formContainer} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={styles.formContainer} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
           <Controller
             control={taskControl}
             name="title"
@@ -637,6 +726,7 @@ export default function TabsLayout() {
             style={{ marginTop: spacing.lg }}
           />
         </ScrollView>
+        {renderTimePicker()}
       </BottomSheet>
 
       {/* Note Bottom Sheet Form */}
@@ -652,7 +742,7 @@ export default function TabsLayout() {
         title="Add New Note"
         snapPoint={0.7}
       >
-        <ScrollView contentContainerStyle={[styles.formContainer, { paddingHorizontal: 16 }]} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={[styles.formContainer, { paddingHorizontal: 16 }]} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
           {/* Notion-Style Large Title Input */}
           <Controller
             control={noteControl}
@@ -709,7 +799,7 @@ export default function TabsLayout() {
                       }}
                     >
                       <Text style={{ fontSize: 12, fontWeight: '600', color: categoryColors[layoutIsCustomCategoryActive ? 'Others' : value] || colors.primary }}>
-                        {layoutIsCustomCategoryActive ? 'Others...' : value}
+                        {layoutIsCustomCategoryActive ? (layoutCustomCategoryName.trim() || 'Custom...') : value}
                       </Text>
                       <Ionicons name="chevron-down" size={10} color={categoryColors[layoutIsCustomCategoryActive ? 'Others' : value] || colors.primary} style={{ marginLeft: 4 }} />
                     </Pressable>
@@ -882,7 +972,7 @@ export default function TabsLayout() {
         title="Log Progress Metric"
         snapPoint={0.55}
       >
-        <ScrollView contentContainerStyle={styles.formContainer} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={styles.formContainer} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
           <Controller
             control={progressControl}
             name="metricName"
@@ -928,12 +1018,13 @@ export default function TabsLayout() {
         isVisible={activeSheet === 'routine'}
         onClose={() => {
           setActiveSheet(null);
+          setPrefilledDate('');
           resetRoutineForm();
         }}
         title="Add Daily Routine"
         snapPoint={0.6}
       >
-        <ScrollView contentContainerStyle={styles.formContainer} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={styles.formContainer} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
           <Controller
             control={routineControl}
             name="title"
@@ -958,8 +1049,8 @@ export default function TabsLayout() {
                   <Pressable onPress={() => setTimePickerTarget({ fieldName: 'time', value, onChange })}>
                     <View pointerEvents="none">
                       <Input
-                        label="Start Time"
-                        placeholder="Select..."
+                        label="Start Time (Optional)"
+                        placeholder="All day"
                         value={value}
                         error={routineErrors.time?.message}
                       />
@@ -1040,6 +1131,7 @@ export default function TabsLayout() {
             style={{ marginTop: spacing.lg }}
           />
         </ScrollView>
+        {renderTimePicker()}
       </BottomSheet>
 
       {/* Expense Bottom Sheet Form */}
@@ -1047,12 +1139,15 @@ export default function TabsLayout() {
         isVisible={activeSheet === 'expense'}
         onClose={() => {
           setActiveSheet(null);
+          setPrefilledDate('');
+          setIsAddingExpenseCategory(false);
+          setNewExpenseCategoryName('');
           resetExpenseForm();
         }}
         title="Log New Expense"
         snapPoint={0.65}
       >
-        <ScrollView contentContainerStyle={styles.formContainer} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={styles.formContainer} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
           <Controller
             control={expenseControl}
             name="title"
@@ -1073,7 +1168,7 @@ export default function TabsLayout() {
             name="amount"
             render={({ field: { onChange, onBlur, value } }) => (
               <Input
-                label="Amount ($)"
+                label="Amount (₹)"
                 placeholder="4.80, 15.00..."
                 keyboardType="numeric"
                 onBlur={onBlur}
@@ -1093,12 +1188,14 @@ export default function TabsLayout() {
                   Expense Category
                 </Text>
                 <View style={styles.categoryRow}>
-                  {['Food & Dining', 'Transport', 'Shopping', 'Entertainment', 'Other'].map((cat) => {
+                  {expenseCategoryOptions.map((cat) => {
                     const isSelected = value === cat;
+                    const isCustom = !isDefaultExpenseCategory(cat);
                     return (
                       <Pressable
                         key={cat}
                         onPress={() => onChange(cat)}
+                        onLongPress={isCustom ? () => handleRemoveExpenseCategory(cat, value, onChange) : undefined}
                         style={[
                           styles.categoryBadge,
                           {
@@ -1113,7 +1210,58 @@ export default function TabsLayout() {
                       </Pressable>
                     );
                   })}
+                  {!isAddingExpenseCategory && (
+                    <Pressable
+                      onPress={() => setIsAddingExpenseCategory(true)}
+                      style={[styles.categoryBadge, { borderStyle: 'dashed', borderColor: colors.primary, flexDirection: 'row', alignItems: 'center' }]}
+                    >
+                      <Ionicons name="add" size={14} color={colors.primary} />
+                      <Text style={[styles.categoryText, { color: colors.primary, marginLeft: 2 }]}>New</Text>
+                    </Pressable>
+                  )}
                 </View>
+                {isAddingExpenseCategory && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                    <TextInput
+                      value={newExpenseCategoryName}
+                      onChangeText={setNewExpenseCategoryName}
+                      placeholder="e.g. Rent, Pets, Travel"
+                      placeholderTextColor={colors.textMuted}
+                      maxLength={MAX_CATEGORY_NAME_LENGTH}
+                      autoFocus
+                      returnKeyType="done"
+                      onSubmitEditing={() => handleCreateExpenseCategory(onChange)}
+                      style={{
+                        flex: 1,
+                        color: colors.text,
+                        backgroundColor: colors.surface,
+                        borderColor: colors.border,
+                        borderWidth: 1,
+                        borderRadius: 10,
+                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                        fontSize: 13,
+                      }}
+                    />
+                    <Pressable
+                      onPress={() => handleCreateExpenseCategory(onChange)}
+                      style={{ marginLeft: 8, backgroundColor: colors.primary, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 }}
+                    >
+                      <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '700' }}>Add</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => { setIsAddingExpenseCategory(false); setNewExpenseCategoryName(''); }}
+                      style={{ marginLeft: 4, padding: 8 }}
+                    >
+                      <Ionicons name="close" size={18} color={colors.textMuted} />
+                    </Pressable>
+                  </View>
+                )}
+                {customExpenseCategories.length > 0 && !isAddingExpenseCategory && (
+                  <Text style={{ fontSize: 10, color: colors.textMuted, marginTop: 2 }}>
+                    Long-press one of your own categories to remove it.
+                  </Text>
+                )}
               </View>
             )}
           />
@@ -1137,7 +1285,7 @@ export default function TabsLayout() {
         title="Create New Target"
         snapPoint={0.65}
       >
-        <ScrollView contentContainerStyle={styles.formContainer} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={styles.formContainer} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
           <Controller
             control={targetControl}
             name="title"
@@ -1207,15 +1355,6 @@ export default function TabsLayout() {
           />
         </ScrollView>
       </BottomSheet>
-      <TimePickerModal
-        isVisible={timePickerTarget !== null}
-        initialTime={timePickerTarget?.value || new Date().toTimeString().slice(0, 5)}
-        onClose={() => setTimePickerTarget(null)}
-        onConfirm={(selectedTime) => {
-          timePickerTarget?.onChange(selectedTime);
-          setTimePickerTarget(null);
-        }}
-      />
     </View>
   );
 }

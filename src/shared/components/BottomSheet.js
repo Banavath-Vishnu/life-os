@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { StyleSheet, View, Text, Modal, Pressable, Dimensions, KeyboardAvoidingView, Platform } from 'react-native';
+import { StyleSheet, View, Text, Modal, Pressable, Dimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   useSharedValue,
@@ -8,8 +8,9 @@ import Animated, {
   withTiming,
   runOnJS,
 } from 'react-native-reanimated';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useTheme } from '../../core/theme/theme';
+import KeyboardSafeView from './KeyboardSafeView';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -33,7 +34,7 @@ export default function BottomSheet({
     if (isVisible) {
       // Animate in
       translateY.value = withTiming(0, { duration: 200 });
-      backdropOpacity.value = withTiming(0.5, { duration: 250 });
+      backdropOpacity.value = withTiming(0.6, { duration: 250 });
     } else {
       // Animate out
       translateY.value = withTiming(SCREEN_HEIGHT, { duration: 200 });
@@ -63,9 +64,10 @@ export default function BottomSheet({
       animationType="none"
       onRequestClose={handleClose}
     >
-      <View style={styles.container}>
+      {/* Sheet rides above the keyboard and shrinks to the space left (never under the status bar) */}
+      <KeyboardSafeView style={[styles.container, { paddingTop: insets.top }]}>
         {/* Backdrop */}
-        <Animated.View style={[styles.backdrop, { backgroundColor: '#000000' }, animatedBackdropStyle]}>
+        <Animated.View style={[styles.backdrop, { backgroundColor: '#0f172a' }, animatedBackdropStyle]}>
           <Pressable style={styles.backdropPressable} onPress={handleClose} />
         </Animated.View>
 
@@ -110,17 +112,11 @@ export default function BottomSheet({
           </View>
 
           {/* Child content scrollable/view */}
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={{ flex: 1 }}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
-          >
-            <View style={[styles.content, { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl + insets.bottom }]}>
-              {children}
-            </View>
-          </KeyboardAvoidingView>
+          <View style={[styles.content, { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl + insets.bottom }]}>
+            {children}
+          </View>
         </Animated.View>
-      </View>
+      </KeyboardSafeView>
     </Modal>
   );
 }
@@ -138,8 +134,6 @@ const styles = StyleSheet.create({
   },
   sheet: {
     width: '100%',
-    position: 'absolute',
-    bottom: 0,
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.15,

@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import { runQuery } from '../db/sqlite';
 import { useStore } from '../store/store';
+import { getLocalDateObject } from '../utils/date';
 
 // Direct submodule imports from expo-notifications to bypass index.js side effects in Expo Go
 import { setNotificationHandler } from 'expo-notifications/build/NotificationsHandler';
@@ -15,7 +16,8 @@ import { addNotificationReceivedListener, addNotificationResponseReceivedListene
 // Configure default notification handler (show alerts while app is foregrounded)
 setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: true,
   }),
@@ -65,14 +67,21 @@ export async function logNotificationToDb(title, body, type) {
 /**
  * Set up listeners for foreground local notifications & notification taps
  */
+const loggedNotificationKeys = new Set();
+const getNotificationKey = (notification) => `${notification.request.identifier}-${notification.date}`;
+
 export function registerLocalNotificationListeners() {
   const subscription = addNotificationReceivedListener(async (notification) => {
+    loggedNotificationKeys.add(getNotificationKey(notification));
     const { title, body, data } = notification.request.content;
     const type = data?.type || 'system';
     await logNotificationToDb(title, body, type);
   });
 
   const responseSubscription = addNotificationResponseReceivedListener(async (response) => {
+    const key = getNotificationKey(response.notification);
+    if (loggedNotificationKeys.has(key)) return;
+    loggedNotificationKeys.add(key);
     const { title, body, data } = response.notification.request.content;
     const type = data?.type || 'system';
     await logNotificationToDb(title, body, type);
@@ -100,14 +109,14 @@ export async function scheduleTaskNotifications(task, settings) {
   }
 
   // If task is completed or has no times, we are done
-  if (task.status === 'completed' || !task.dueDate || !task.startTime) {
+  if (task.status === 'completed' || !task.dueDate || (!task.startTime && !task.endTime)) {
     return;
   }
 
   const today = new Date();
 
   // 2. Schedule Task Start Alert
-  if (settings.taskStartOffset !== null) {
+  if (task.startTime && settings.taskStartOffset !== null) {
     const startDate = new Date(`${task.dueDate}T${task.startTime}`);
     const triggerDate = new Date(startDate.getTime() - settings.taskStartOffset * 60 * 1000);
 
@@ -125,8 +134,8 @@ export async function scheduleTaskNotifications(task, settings) {
         },
         trigger: {
           type: 'date',
-          date: triggerDate,
           channelId: 'default',
+          date: triggerDate,
         },
       });
     }
@@ -134,11 +143,10 @@ export async function scheduleTaskNotifications(task, settings) {
 
   // 3. Schedule Task End Alerts
   if (task.endTime) {
-    const startDate = new Date(`${task.dueDate}T${task.startTime}`);
     const endDate = new Date(`${task.dueDate}T${task.endTime}`);
     
     // Support overnight span calculations
-    if (task.endTime < task.startTime) {
+    if (task.startTime && task.endTime < task.startTime) {
       endDate.setDate(endDate.getDate() + 1);
     }
 
@@ -153,8 +161,8 @@ export async function scheduleTaskNotifications(task, settings) {
         },
         trigger: {
           type: 'date',
-          date: endDate,
           channelId: 'default',
+          date: endDate,
         },
       });
     }
@@ -172,8 +180,8 @@ export async function scheduleTaskNotifications(task, settings) {
           },
           trigger: {
             type: 'date',
-            date: preEndTrigger,
             channelId: 'default',
+            date: preEndTrigger,
           },
         });
       }
@@ -213,10 +221,14 @@ export async function scheduleRoutineNotifications(routine, settings) {
   const hasOffset = settings.routineOffset !== null && settings.routineOffset > 0;
   let preStartHour = startHour;
   let preStartMinute = startMinute;
+  let preStartIsPrevDay = false;
 
   if (hasOffset) {
     let totalMins = startHour * 60 + startMinute - settings.routineOffset;
-    if (totalMins < 0) totalMins += 24 * 60;
+    if (totalMins < 0) {
+      totalMins += 24 * 60;
+      preStartIsPrevDay = true;
+    }
     preStartHour = Math.floor(totalMins / 60);
     preStartMinute = totalMins % 60;
   }
@@ -260,8 +272,8 @@ export async function scheduleRoutineNotifications(routine, settings) {
           },
           trigger: {
             type: 'date',
-            date: alertTimePre,
             channelId: 'default',
+            date: alertTimePre,
           },
         });
       }
@@ -279,8 +291,8 @@ export async function scheduleRoutineNotifications(routine, settings) {
           },
           trigger: {
             type: 'date',
-            date: triggerDate,
             channelId: 'default',
+            date: triggerDate,
           },
         });
       }
@@ -302,8 +314,8 @@ export async function scheduleRoutineNotifications(routine, settings) {
           },
           trigger: {
             type: 'date',
-            date: triggerEndDate,
             channelId: 'default',
+            date: triggerEndDate,
           },
         });
       }
@@ -324,9 +336,9 @@ export async function scheduleRoutineNotifications(routine, settings) {
         },
         trigger: {
           type: 'daily',
+          channelId: 'default',
           hour: preStartHour,
           minute: preStartMinute,
-          channelId: 'default',
         },
       });
     }
@@ -342,9 +354,9 @@ export async function scheduleRoutineNotifications(routine, settings) {
         },
         trigger: {
           type: 'daily',
+          channelId: 'default',
           hour: startHour,
           minute: startMinute,
-          channelId: 'default',
         },
       });
     }
@@ -360,9 +372,9 @@ export async function scheduleRoutineNotifications(routine, settings) {
         },
         trigger: {
           type: 'daily',
+          channelId: 'default',
           hour: endHour,
           minute: endMinute,
-          channelId: 'default',
         },
       });
     }
@@ -372,8 +384,9 @@ export async function scheduleRoutineNotifications(routine, settings) {
   // 4. Weekly Recurrence (scheduled on the weekday of scheduledDate)
   if (routine.frequency === 'weekly') {
     if (!routine.scheduledDate) return;
-    const jsWeekday = new Date(routine.scheduledDate).getDay();
+    const jsWeekday = getLocalDateObject(routine.scheduledDate).getDay();
     const expoWeekday = jsWeekday + 1;
+    const preStartExpoWeekday = preStartIsPrevDay ? ((expoWeekday + 5) % 7) + 1 : expoWeekday;
 
     // Schedule Pre-Start
     if (hasOffset) {
@@ -386,10 +399,10 @@ export async function scheduleRoutineNotifications(routine, settings) {
         },
         trigger: {
           type: 'weekly',
-          weekday: expoWeekday,
+          channelId: 'default',
+          weekday: preStartExpoWeekday,
           hour: preStartHour,
           minute: preStartMinute,
-          channelId: 'default',
         },
       });
     }
@@ -405,10 +418,10 @@ export async function scheduleRoutineNotifications(routine, settings) {
         },
         trigger: {
           type: 'weekly',
+          channelId: 'default',
           weekday: expoWeekday,
           hour: startHour,
           minute: startMinute,
-          channelId: 'default',
         },
       });
     }
@@ -428,10 +441,10 @@ export async function scheduleRoutineNotifications(routine, settings) {
         },
         trigger: {
           type: 'weekly',
+          channelId: 'default',
           weekday: endExpoWeekday,
           hour: endHour,
           minute: endMinute,
-          channelId: 'default',
         },
       });
     }
@@ -441,7 +454,7 @@ export async function scheduleRoutineNotifications(routine, settings) {
   // 5. Monthly Recurrence (schedule exact Date objects for the next 6 months to handle month-end fallbacks)
   if (routine.frequency === 'monthly') {
     if (!routine.scheduledDate) return;
-    const sDate = new Date(routine.scheduledDate);
+    const sDate = getLocalDateObject(routine.scheduledDate);
     const targetDay = sDate.getDate();
 
     let currYear = today.getFullYear();
@@ -474,8 +487,8 @@ export async function scheduleRoutineNotifications(routine, settings) {
             },
             trigger: {
               type: 'date',
-              date: alertTimePre,
               channelId: 'default',
+              date: alertTimePre,
             },
           });
         }
@@ -493,8 +506,8 @@ export async function scheduleRoutineNotifications(routine, settings) {
             },
             trigger: {
               type: 'date',
-              date: triggerDate,
               channelId: 'default',
+              date: triggerDate,
             },
           });
         }
@@ -516,8 +529,8 @@ export async function scheduleRoutineNotifications(routine, settings) {
             },
             trigger: {
               type: 'date',
-              date: triggerEndDate,
               channelId: 'default',
+              date: triggerEndDate,
             },
           });
         }

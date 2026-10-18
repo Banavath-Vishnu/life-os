@@ -1,6 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { AppState } from 'react-native';
 import { StyleSheet, View, Text, FlatList, Pressable, Alert, Modal, TextInput, ScrollView } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import * as Haptics from 'expo-haptics';
+import Animated, { LinearTransition } from 'react-native-reanimated';
 import { useTheme } from '../../src/core/theme/theme';
 import { useStore } from '../../src/core/store/store';
 import Card from '../../src/shared/components/Card';
@@ -8,27 +11,26 @@ import Button from '../../src/shared/components/Button';
 import EmptyState from '../../src/shared/components/EmptyState';
 import LoadingState from '../../src/shared/components/LoadingState';
 import TimePickerModal from '../../src/shared/components/TimePickerModal';
-import { scheduleTaskNotifications, cancelScheduledNotificationAsync } from '../../src/core/notifications/notificationManager';
+import KeyboardSafeView from '../../src/shared/components/KeyboardSafeView';
+import { scheduleTaskNotifications, scheduleRoutineNotifications, cancelScheduledNotificationAsync } from '../../src/core/notifications/notificationManager';
 import { selectAll, runQuery } from '../../src/core/db/sqlite';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-// Helper date utilities
-const getYesterdayStr = (dateStr) => {
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() - 1);
-  return d.toISOString().split('T')[0];
-};
+import { getLocalTodayStr, getYesterdayStr, getNextDayStr, formatLocalDate, getLocalDateObject } from '../../src/core/utils/date';
 
-const getNextDayStr = (dateStr) => {
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() + 1);
-  return d.toISOString().split('T')[0];
-};
-
-const isTaskActiveOnDate = (task, dateStr) => {
-  if (task.dueDate === dateStr) return true;
-  if (task.startTime && task.endTime && task.endTime < task.startTime) {
-    const yesterday = getYesterdayStr(dateStr);
-    if (task.dueDate === yesterday) return true;
+const isTaskActiveOnDate = (task, dateStr, todayStr) => {
+  if (task.status === 'completed') {
+    return task.completedDate === dateStr;
+  }
+  if (task.status === 'pending') {
+    const activeDate = task.dueDate < todayStr ? todayStr : task.dueDate;
+    if (dateStr === activeDate) return true;
+    // Viewing a past day: show what was due then (it will be flagged as missed)
+    if (dateStr < todayStr && task.dueDate === dateStr) return true;
+    if (task.startTime && task.endTime && task.endTime < task.startTime) {
+      const yesterday = getYesterdayStr(dateStr);
+      if (task.dueDate === yesterday) return true;
+    }
   }
   return false;
 };
@@ -53,15 +55,17 @@ const formatTaskTime = (t, dateStr) => {
 const getTaskCountdownLabel = (t, dateStr) => {
   if (!t.startTime || t.status === 'completed') return null;
   
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalTodayStr();
   if (dateStr !== today) return null;
 
   const isStartDay = t.dueDate === dateStr;
   const isOvernight = t.endTime && t.endTime < t.startTime;
   
+  if (isTaskOverdueOnDate(t, dateStr)) return null;
   if (isOvernight && !isStartDay) {
-    return '⚡ Ongoing from Yesterday';
+    return t.dueDate === getYesterdayStr(dateStr) ? '⚡ Ongoing from Yesterday' : null;
   }
+  if (!isStartDay) return null; // rolled over from an earlier day
 
   const now = new Date();
   const nowMins = now.getHours() * 60 + now.getMinutes();
@@ -85,8 +89,8 @@ const getTaskCountdownLabel = (t, dateStr) => {
 
 // Recurrence checker for Weekly & Monthly routines (with end-of-month fallback)
 const isSameMonthlyDay = (scheduledDateStr, targetDateStr) => {
-  const sDate = new Date(scheduledDateStr);
-  const tDate = new Date(targetDateStr);
+  const sDate = getLocalDateObject(scheduledDateStr);
+  const tDate = getLocalDateObject(targetDateStr);
   const targetDay = sDate.getDate();
   
   const tYear = tDate.getFullYear();
@@ -99,11 +103,15 @@ const isSameMonthlyDay = (scheduledDateStr, targetDateStr) => {
 
 const isRoutineActiveOnDate = (r, dateStr) => {
   if (r.frequency === 'daily') return true;
+  // Older weekly/monthly routines were saved without a scheduledDate; anchor them to their creation day
+  const anchorDate = r.scheduledDate || (r.updatedAt ? formatLocalDate(new Date(r.updatedAt)) : null);
   if (r.frequency === 'weekly') {
-    return new Date(r.scheduledDate).getDay() === new Date(dateStr).getDay();
+    if (!anchorDate) return false;
+    return getLocalDateObject(anchorDate).getDay() === getLocalDateObject(dateStr).getDay();
   }
   if (r.frequency === 'monthly') {
-    return isSameMonthlyDay(r.scheduledDate, dateStr);
+    if (!anchorDate) return false;
+    return isSameMonthlyDay(anchorDate, dateStr);
   }
   if (r.frequency === 'once') {
     return r.scheduledDate === dateStr;
@@ -111,17 +119,78 @@ const isRoutineActiveOnDate = (r, dateStr) => {
   return false;
 };
 
+// Routines that were due on the day before `dateStr` but never ticked.
+// They are shown as MISSED only on that next day, never on later days.
+const getMissedRoutines = (allRoutines, dateStr, completedOnPrevDay, todayStr) => {
+  if (dateStr > todayStr) return [];
+  const prevDay = getYesterdayStr(dateStr);
+  return allRoutines.filter(r => {
+    const anchorDate = r.scheduledDate || (r.updatedAt ? formatLocalDate(new Date(r.updatedAt)) : null);
+    if (!anchorDate || anchorDate > prevDay) return false; // didn't exist yet
+    return isRoutineActiveOnDate(r, prevDay) && !completedOnPrevDay.has(r.id);
+  }).map(r => ({
+    id: `routine-missed-${r.id}`,
+    title: r.title,
+    time: 'MISSED',
+    sortTime: 'ALL DAY',
+    details: r.details,
+    frequency: r.frequency,
+    status: 'pending',
+    isOverdue: true,
+    isMissedRoutine: true,
+    originalRoutineId: r.id,
+    dueDate: prevDay,
+    endTime: r.endTime,
+  }));
+};
+
+// Consecutive completed occurrences ending today (today's occurrence doesn't break it until the day is over)
+const getRoutineStreak = (routine, completedDates, todayStr) => {
+  if (routine.frequency === 'once') return 0;
+  let streak = 0;
+  let dateStr = todayStr;
+  for (let i = 0; i < 400; i++) {
+    if (isRoutineActiveOnDate(routine, dateStr)) {
+      if (completedDates.has(dateStr)) streak++;
+      else if (dateStr !== todayStr) break;
+    }
+    dateStr = getYesterdayStr(dateStr);
+  }
+  return streak;
+};
+
 // Task expired end-time overdue checker
 const isTaskOverdueOnDate = (task, dateStr) => {
   if (task.status !== 'pending' || !task.dueDate) return false;
   
-  if (task.dueDate < dateStr) return true;
-  
+  // Case 1: Any day after the due date (pending tasks roll over until done),
+  // except an overnight task from yesterday that is still running
+  if (task.dueDate < dateStr) {
+    // Future days haven't happened yet, so nothing can be missed on them
+    if (dateStr > getLocalTodayStr()) return false;
+    const isOvernight = task.startTime && task.endTime && task.endTime < task.startTime;
+    if (isOvernight && dateStr === getNextDayStr(task.dueDate) && dateStr === getLocalTodayStr()) {
+      const now = new Date();
+      const nowMins = now.getHours() * 60 + now.getMinutes();
+      const [endH, endM] = task.endTime.split(':').map(Number);
+      if (nowMins <= endH * 60 + endM) return false;
+    }
+    return true;
+  }
+
+  // Case 2: A past due date that ended with the task still pending
+  if (task.dueDate === dateStr && dateStr < getLocalTodayStr()) {
+    const isOvernight = task.startTime && task.endTime && task.endTime < task.startTime;
+    // overnight task from yesterday may still be running today
+    if (!(isOvernight && dateStr === getYesterdayStr(getLocalTodayStr()))) return true;
+  }
+
+  // Case 3: The due date itself, but past the end time
   if (task.dueDate === dateStr && task.endTime) {
     if (task.startTime && task.endTime < task.startTime) {
       return false; // Overnight task spans to next day
     }
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalTodayStr();
     if (dateStr === today) {
       const now = new Date();
       const nowMins = now.getHours() * 60 + now.getMinutes();
@@ -130,25 +199,14 @@ const isTaskOverdueOnDate = (task, dateStr) => {
       return nowMins > endMins;
     }
   }
-  
-  const yesterday = getYesterdayStr(dateStr);
-  if (task.dueDate === yesterday && task.startTime && task.endTime && task.endTime < task.startTime) {
-    const today = new Date().toISOString().split('T')[0];
-    if (dateStr === today) {
-      const now = new Date();
-      const nowMins = now.getHours() * 60 + now.getMinutes();
-      const [endH, endM] = task.endTime.split(':').map(Number);
-      const endMins = endH * 60 + endM;
-      return nowMins > endMins;
-    }
-  }
-  
+
   return false;
 };
 
 export default function TasksScreen() {
   const { theme } = useTheme();
   const { colors, spacing, typography, roundness } = theme;
+  const insets = useSafeAreaInsets();
 
   const tasksVersion = useStore((state) => state.tasksVersion);
   const routineVersion = useStore((state) => state.routineVersion);
@@ -156,6 +214,7 @@ export default function TasksScreen() {
   const triggerRoutineUpdate = useStore((state) => state.triggerRoutineUpdate);
   const setActiveSheet = useStore((state) => state.setActiveSheet);
   const setPrefilledDate = useStore((state) => state.setPrefilledDate);
+  const hapticsEnabled = useStore((state) => state.hapticsEnabled);
 
   // Main Screen View Selector: 'checklist' | 'routine'
   const activeTab = useStore((state) => state.tasksSubTab);
@@ -166,11 +225,20 @@ export default function TasksScreen() {
   const [tasks, setTasks] = useState([]);
   const [taskFilter, setTaskFilter] = useState('today'); // 'today' | 'missed' | 'upcoming' | 'completed'
   
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getLocalTodayStr();
   const [selectedChecklistDate, setSelectedChecklistDate] = useState(todayStr);
 
   // Task Edit Modal States
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
+
+  // Routine edit modal states
+  const [activeRoutine, setActiveRoutine] = useState(null);
+  const [isRoutineEditVisible, setIsRoutineEditVisible] = useState(false);
+  const [editRoutineTitle, setEditRoutineTitle] = useState('');
+  const [editRoutineDetails, setEditRoutineDetails] = useState('');
+  const [editRoutineTime, setEditRoutineTime] = useState('');
+  const [editRoutineEndTime, setEditRoutineEndTime] = useState('');
+  const [editRoutineFrequency, setEditRoutineFrequency] = useState('daily');
   const [activeTask, setActiveTask] = useState(null);
   const [editTitle, setEditTitle] = useState('');
   const [editDescription, setEditDescription] = useState('');
@@ -181,6 +249,19 @@ export default function TasksScreen() {
 
   // Clock picker overlay state
   const [timePickerTarget, setTimePickerTarget] = useState(null);
+
+  // Clock picker rendered inside the edit modals (a sibling Modal can't open over them on iOS)
+  const renderTimePicker = () => (
+    <TimePickerModal
+      isVisible={timePickerTarget !== null}
+      initialTime={timePickerTarget?.value || new Date().toTimeString().slice(0, 5)}
+      onClose={() => setTimePickerTarget(null)}
+      onConfirm={(selectedTime) => {
+        timePickerTarget?.onChange(selectedTime);
+        setTimePickerTarget(null);
+      }}
+    />
+  );
 
   // Generate 10 days of dates dynamically: 3 days before today, today, and 6 days after today
   const getDaysOfWeek = () => {
@@ -193,14 +274,15 @@ export default function TasksScreen() {
       d.setDate(today.getDate() + i);
       const isToday = d.toDateString() === today.toDateString();
       const isPast = d < today && !isToday;
+      const formattedD = formatLocalDate(d);
       days.push({
-        key: d.toISOString().split('T')[0],
+        key: formattedD,
         label: dayNames[d.getDay()],
         date: String(d.getDate()),
         month: monthNamesShort[d.getMonth()].toUpperCase(),
         isToday: isToday,
         isPast: isPast,
-        fullDateStr: d.toISOString().split('T')[0]
+        fullDateStr: formattedD
       });
     }
     return days;
@@ -211,7 +293,6 @@ export default function TasksScreen() {
 
   // Routine States
   const [routines, setRoutines] = useState([]);
-  const [selectedDay, setSelectedDay] = useState(todayDayName);
 
   // Calendar Explorer Modal States
   const [isCalendarVisible, setIsCalendarVisible] = useState(false);
@@ -227,10 +308,11 @@ export default function TasksScreen() {
   // Dynamic Routine active node finder
   const getActiveRoutineId = () => {
     if (!routines || routines.length === 0) return null;
+    if (selectedChecklistDate !== todayStr) return null;
     const now = new Date();
     const currentMins = now.getHours() * 60 + now.getMinutes();
     
-    const realRoutines = routines.filter(r => !r.isTaskLink && !r.isOverdue);
+    const realRoutines = routines.filter(r => !r.isTaskLink && !r.isOverdue && r.time && r.time.includes(':'));
     if (realRoutines.length === 0) return null;
 
     const itemsWithMins = realRoutines.map(item => {
@@ -238,7 +320,7 @@ export default function TasksScreen() {
       return { id: item.id, mins: h * 60 + m };
     });
     itemsWithMins.sort((a, b) => a.mins - b.mins);
-    let activeItem = itemsWithMins[0];
+    let activeItem = null;
     for (let i = 0; i < itemsWithMins.length; i++) {
       if (itemsWithMins[i].mins <= currentMins) {
         activeItem = itemsWithMins[i];
@@ -249,7 +331,14 @@ export default function TasksScreen() {
 
   const activeRoutineId = getActiveRoutineId();
 
-  // Helper to check if past day's tasks are fully completed
+  // Helper to check if a day was missed (had incomplete tasks at the end of the day)
+  const isDayMissed = (fullDateStr) => {
+    const dayTasks = tasks.filter(t => t.dueDate === fullDateStr);
+    if (dayTasks.length === 0) return false;
+    return dayTasks.some(t => t.status === 'pending');
+  };
+
+  // Helper to check if past day's tasks are fully completed on or before that day
   const isDayFullyCompleted = (fullDateStr) => {
     const dayTasks = tasks.filter(t => t.dueDate === fullDateStr);
     if (dayTasks.length === 0) return false;
@@ -279,17 +368,26 @@ export default function TasksScreen() {
       // Filter in JS using recurrence helpers to support Weekly & Monthly correct intervals
       const activeRoutines = (data || []).filter(r => isRoutineActiveOnDate(r, selectedChecklistDate));
 
+      // Completion history for streaks
+      const logs = await selectAll("SELECT routineId, logDate FROM routine_logs WHERE status = 'completed'");
+      const completedByRoutine = {};
+      (logs || []).forEach(l => {
+        if (!completedByRoutine[l.routineId]) completedByRoutine[l.routineId] = new Set();
+        completedByRoutine[l.routineId].add(l.logDate);
+      });
+
       const formattedRoutines = activeRoutines.map(r => ({
         ...r,
-        time: r.time, // Show start time only on timeline
-        sortTime: r.time,
-        endTime: r.endTime
+        time: r.time || 'ALL DAY', // Show start time only on timeline (no time = all day)
+        sortTime: r.time || 'ALL DAY',
+        endTime: r.endTime,
+        streak: getRoutineStreak(r, completedByRoutine[r.id] || new Set(), todayStr)
       }));
 
       // 2. Query checklist tasks active on this date (excluding those that are overdue!)
       const allTasksData = await selectAll('SELECT * FROM tasks');
       const activeDayTasks = allTasksData.filter(t => 
-        isTaskActiveOnDate(t, selectedChecklistDate) && 
+        isTaskActiveOnDate(t, selectedChecklistDate, todayStr) && 
         !isTaskOverdueOnDate(t, selectedChecklistDate)
       );
 
@@ -298,6 +396,7 @@ export default function TasksScreen() {
         title: t.title,
         time: t.startTime || 'ALL DAY', // Show start time only
         sortTime: t.startTime || 'ALL DAY',
+        startTime: t.startTime,
         details: t.description || 'Checklist Task',
         frequency: 'task',
         status: t.status,
@@ -308,14 +407,18 @@ export default function TasksScreen() {
       }));
 
       // 3. Query overdue tasks (due before selected day, or due today/yesterday but past their end time)
-      const overdueTasks = allTasksData.filter(t => 
-        isTaskOverdueOnDate(t, selectedChecklistDate)
+      // Timeline shows a missed task only on its due day (once expired) and the day after — not every later day
+      const prevDay = getYesterdayStr(selectedChecklistDate);
+      const overdueTasks = allTasksData.filter(t =>
+        isTaskOverdueOnDate(t, selectedChecklistDate) &&
+        (t.dueDate === prevDay || t.dueDate === selectedChecklistDate)
       );
       const formattedOverdueTasks = overdueTasks.map(t => ({
         id: `task-overdue-${t.id}`,
         title: t.title,
         time: 'MISSED',
         sortTime: 'ALL DAY',
+        startTime: t.startTime,
         details: t.description || 'Checklist Task',
         frequency: 'task',
         status: t.status,
@@ -326,8 +429,17 @@ export default function TasksScreen() {
         endTime: t.endTime
       }));
 
+      // Routines not ticked yesterday (relative to the viewed day)
+      const prevDayLogs = await selectAll(
+        "SELECT routineId FROM routine_logs WHERE logDate = ? AND status = 'completed'",
+        [prevDay]
+      );
+      const missedRoutines = getMissedRoutines(
+        data || [], selectedChecklistDate, new Set((prevDayLogs || []).map(l => l.routineId)), todayStr
+      );
+
       // 4. Combine and Sort: Group 1 (Overdue), Group 2 (ALL DAY), Group 3 (Timed chronologically)
-      const combined = [...formattedOverdueTasks, ...formattedRoutines, ...taskRoutineItems];
+      const combined = [...formattedOverdueTasks, ...missedRoutines, ...formattedRoutines, ...taskRoutineItems];
       combined.sort((a, b) => {
         // Group 1: Overdue tasks go first
         const aOverdue = a.isOverdue;
@@ -358,12 +470,16 @@ export default function TasksScreen() {
     }
   };
 
+  const hasLoadedOnceRef = useRef(false);
+  const [routinesLoadedFor, setRoutinesLoadedFor] = useState(null);
   const loadAllData = async () => {
-    setLoading(true);
+    if (!hasLoadedOnceRef.current) setLoading(true);
     await loadChecklistData();
     if (activeTab === 'routine') {
       await loadRoutineData();
+      setRoutinesLoadedFor(selectedChecklistDate);
     }
+    hasLoadedOnceRef.current = true;
     setLoading(false);
   };
 
@@ -371,11 +487,38 @@ export default function TasksScreen() {
     loadAllData();
   }, [activeTab, tasksVersion, routineVersion, selectedChecklistDate]);
 
+  // After midnight: if the user was on "today", move to the new today; always refresh
+  const lastTodayRef = useRef(todayStr);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      const newToday = getLocalTodayStr();
+      if (newToday === lastTodayRef.current) return;
+      const oldToday = lastTodayRef.current;
+      lastTodayRef.current = newToday;
+      setSelectedChecklistDate((prev) => (prev === oldToday ? newToday : prev));
+      triggerTasksUpdate();
+    });
+    return () => sub.remove();
+  }, []);
+
+  // Share the viewed day so the tab bar "+" creates items on it
+  const setTasksSelectedDate = useStore((state) => state.setTasksSelectedDate);
+  useEffect(() => {
+    setTasksSelectedDate(selectedChecklistDate);
+  }, [selectedChecklistDate]);
+
   // Tasks Checklist handlers
   const toggleTaskStatus = async (id, currentStatus) => {
     try {
+      if (hapticsEnabled) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      }
       const nextStatus = currentStatus === 'completed' ? 'pending' : 'completed';
-      await runQuery('UPDATE tasks SET status = ? WHERE id = ?', [nextStatus, id]);
+      // The Missed tab lists tasks relative to today, not the selected day
+      const completionDay = activeTab === 'checklist' && taskFilter === 'missed' ? todayStr : selectedChecklistDate;
+      const completedDate = nextStatus === 'completed' ? completionDay : null;
+      await runQuery('UPDATE tasks SET status = ?, completedDate = ? WHERE id = ?', [nextStatus, completedDate, id]);
       
       // Reschedule or cancel notification alerts
       const tasksList = await selectAll('SELECT * FROM tasks WHERE id = ?', [id]);
@@ -437,6 +580,12 @@ export default function TasksScreen() {
       Alert.alert('Validation Error', 'Task title cannot be empty.');
       return;
     }
+    const dueDateValid = /^\d{4}-\d{2}-\d{2}$/.test(editDueDate) &&
+      formatLocalDate(getLocalDateObject(editDueDate)) === editDueDate;
+    if (!dueDateValid) {
+      Alert.alert('Validation Error', 'Due date must be a real date in YYYY-MM-DD format (e.g. 2026-10-05).');
+      return;
+    }
     try {
       const sql = 'UPDATE tasks SET title = ?, description = ?, priority = ?, dueDate = ?, startTime = ?, endTime = ? WHERE id = ?';
       const params = [
@@ -477,7 +626,18 @@ export default function TasksScreen() {
   // Date-specific Routine status handlers (supports mapped task links)
   const toggleRoutineStatus = async (id, currentStatus) => {
     try {
-      if (String(id).startsWith('task-')) {
+      if (hapticsEnabled) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      }
+      if (String(id).startsWith('routine-missed-')) {
+        const routineId = Number(String(id).replace('routine-missed-', ''));
+        await runQuery('INSERT OR IGNORE INTO routine_logs (routineId, logDate, status) VALUES (?, ?, ?)', [
+          routineId,
+          getYesterdayStr(selectedChecklistDate),
+          'completed'
+        ]);
+        triggerRoutineUpdate();
+      } else if (String(id).startsWith('task-')) {
         const originalTaskId = Number(String(id).replace('task-overdue-', '').replace('task-', ''));
         await toggleTaskStatus(originalTaskId, currentStatus);
       } else {
@@ -494,6 +654,60 @@ export default function TasksScreen() {
       }
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const openRoutineEdit = (item) => {
+    if (item.isTaskLink) {
+      const task = tasks.find(t => t.id === item.originalTaskId);
+      if (task) openTaskDetail(task);
+      return;
+    }
+    setActiveRoutine(item);
+    setEditRoutineTitle(item.title);
+    setEditRoutineDetails(item.details || '');
+    setEditRoutineTime(item.time && item.time.includes(':') ? item.time : '');
+    setEditRoutineEndTime(item.endTime || '');
+    setEditRoutineFrequency(item.frequency || 'daily');
+    setIsRoutineEditVisible(true);
+  };
+
+  const saveRoutineChanges = async () => {
+    if (!editRoutineTitle.trim()) {
+      Alert.alert('Validation Error', 'Routine title cannot be empty.');
+      return;
+    }
+    try {
+      // A new repeat pattern starts from the day being viewed (keeps weekday/day-of-month and 'once' date sensible)
+      const frequencyChanged = editRoutineFrequency !== (activeRoutine.frequency || 'daily');
+      const scheduledDate = frequencyChanged || !activeRoutine.scheduledDate
+        ? selectedChecklistDate
+        : activeRoutine.scheduledDate;
+      await runQuery(
+        'UPDATE routine SET title = ?, details = ?, time = ?, endTime = ?, frequency = ?, scheduledDate = ? WHERE id = ?',
+        [editRoutineTitle.trim(), editRoutineDetails, editRoutineTime || '', editRoutineEndTime || null, editRoutineFrequency, scheduledDate, activeRoutine.id]
+      );
+
+      // Reschedule push alerts
+      const settings = useStore.getState().notificationSettings;
+      const enabled = useStore.getState().notificationsEnabled;
+      if (enabled) {
+        await scheduleRoutineNotifications({
+          id: activeRoutine.id,
+          title: editRoutineTitle.trim(),
+          time: editRoutineTime || '',
+          endTime: editRoutineEndTime || null,
+          frequency: editRoutineFrequency,
+          scheduledDate,
+        }, settings);
+      }
+
+      triggerRoutineUpdate();
+      setIsRoutineEditVisible(false);
+      Alert.alert('Success', 'Routine updated successfully.');
+    } catch (e) {
+      console.error(e);
+      Alert.alert('Error', 'Could not save routine changes.');
     }
   };
 
@@ -521,6 +735,7 @@ export default function TasksScreen() {
             }
 
             triggerRoutineUpdate();
+            if (isRoutineEditVisible) setIsRoutineEditVisible(false);
           } catch (err) {
             console.error(err);
           }
@@ -635,14 +850,18 @@ export default function TasksScreen() {
         });
       }
       
-      const dayTasks = tasks.filter(t => isTaskActiveOnDate(t, selectedChecklistDate));
+      const dayTasks = tasks.filter(t => isTaskActiveOnDate(t, selectedChecklistDate, todayStr));
       
       // Separate active and overdue-today tasks
       const overdueToday = dayTasks.filter(t => isTaskOverdueOnDate(t, selectedChecklistDate));
       const activeToday = dayTasks.filter(t => !isTaskOverdueOnDate(t, selectedChecklistDate));
 
       if (overdueToday.length > 0) {
-        listData.push({ isHeader: true, title: 'Overdue Today (Time Expired)', key: 'header-overdue-today' });
+        listData.push({
+          isHeader: true,
+          title: selectedChecklistDate === todayStr ? 'Overdue Today (Time Expired)' : 'Missed on This Day',
+          key: 'header-overdue-today'
+        });
         overdueToday.forEach(task => {
           listData.push({ isHeader: false, ...task, key: `task-${task.id}` });
         });
@@ -723,107 +942,109 @@ export default function TasksScreen() {
     const countdownLabel = getTaskCountdownLabel(item, selectedChecklistDate);
 
     return (
-      <Card style={styles.taskCard}>
-        {countdownLabel && (
-          <View style={[styles.countdownBanner, { backgroundColor: `${colors.primary}10`, borderRadius: roundness.sm }]}>
-            <Ionicons name="time-outline" size={12} color={colors.primary} style={{ marginRight: 4 }} />
-            <Text style={[styles.countdownText, { color: colors.primary, fontFamily: theme.typography.fontFamily.bold }]}>
-              {countdownLabel}
-            </Text>
-          </View>
-        )}
-
-        <View style={styles.row}>
-          <Pressable onPress={() => toggleTaskStatus(item.id, item.status)} style={styles.checkboxWrapper}>
-            <Ionicons
-              name={isCompleted ? 'checkmark-circle' : 'ellipse-outline'}
-              size={24}
-              color={isCompleted ? colors.success : colors.textMuted}
-            />
-          </Pressable>
-
-          <Pressable onPress={() => openTaskDetail(item)} style={styles.contentWrapper}>
-            <Text
-              style={[
-                styles.title,
-                {
-                  color: colors.text,
-                  fontSize: typography.sizes.md,
-                  fontFamily: theme.typography.fontFamily.medium,
-                  textDecorationLine: isCompleted ? 'line-through' : 'none',
-                  opacity: isCompleted ? 0.6 : 1,
-                },
-              ]}
-            >
-              {item.title}
-            </Text>
-            {item.description ? (
-              <Text
-                style={[
-                  styles.description,
-                  {
-                    color: colors.textSecondary,
-                    fontSize: typography.sizes.xs,
-                    fontFamily: theme.typography.fontFamily.regular,
-                    marginTop: 2,
-                  },
-                ]}
-              >
-                {item.description}
-              </Text>
-            ) : null}
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-              {item.dueDate ? (
-                <Text style={{ fontSize: 10, color: colors.textMuted, marginRight: 8 }}>
-                  Due: {item.dueDate}
-                </Text>
-              ) : null}
-              {item.startTime ? (
-                <Text style={{ fontSize: 10, color: colors.primary, fontWeight: '600' }}>
-                  🕒 {formatTaskTime(item, selectedChecklistDate)}
-                </Text>
-              ) : null}
-            </View>
-          </Pressable>
-
-          <View style={styles.metaWrapper}>
-            <View
-              style={[
-                styles.priorityBadge,
-                {
-                  backgroundColor:
-                    item.priority === 'high'
-                      ? `${colors.error}15`
-                      : item.priority === 'medium'
-                      ? `${colors.warning}15`
-                      : `${colors.success}15`,
-                },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.priorityText,
-                  {
-                    color:
-                      item.priority === 'high'
-                        ? colors.error
-                        : item.priority === 'medium'
-                        ? colors.warning
-                        : colors.success,
-                    fontSize: 9,
-                    fontFamily: theme.typography.fontFamily.bold,
-                  },
-                ]}
-              >
-                {item.priority.toUpperCase()}
+      <Animated.View layout={LinearTransition.springify()}>
+        <Card style={styles.taskCard}>
+          {countdownLabel && (
+            <View style={[styles.countdownBanner, { backgroundColor: `${colors.primary}10`, borderRadius: roundness.sm }]}>
+              <Ionicons name="time-outline" size={12} color={colors.primary} style={{ marginRight: 4 }} />
+              <Text style={[styles.countdownText, { color: colors.primary, fontFamily: theme.typography.fontFamily.bold }]}>
+                {countdownLabel}
               </Text>
             </View>
-            <Pressable onPress={() => deleteTask(item.id, item.title)} style={styles.deleteButton}>
-              <Ionicons name="trash-outline" size={16} color={colors.textMuted} />
+          )}
+
+          <View style={styles.row}>
+            <Pressable onPress={() => toggleTaskStatus(item.id, item.status)} style={styles.checkboxWrapper}>
+              <Ionicons
+                name={isCompleted ? 'checkmark-circle' : 'ellipse-outline'}
+                size={24}
+                color={isCompleted ? colors.success : colors.textMuted}
+              />
             </Pressable>
+
+            <Pressable onPress={() => openTaskDetail(item)} style={styles.contentWrapper}>
+              <Text
+                style={[
+                  styles.title,
+                  {
+                    color: colors.text,
+                    fontSize: typography.sizes.md,
+                    fontFamily: theme.typography.fontFamily.medium,
+                    textDecorationLine: isCompleted ? 'line-through' : 'none',
+                    opacity: isCompleted ? 0.6 : 1,
+                  },
+                ]}
+              >
+                {item.title}
+              </Text>
+              {item.description ? (
+                <Text
+                  style={[
+                    styles.description,
+                    {
+                      color: colors.textSecondary,
+                      fontSize: typography.sizes.xs,
+                      fontFamily: theme.typography.fontFamily.regular,
+                      marginTop: 2,
+                    },
+                  ]}
+                >
+                  {item.description}
+                </Text>
+              ) : null}
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                {item.dueDate ? (
+                  <Text style={{ fontSize: 10, color: colors.textMuted, marginRight: 8 }}>
+                    Due: {item.dueDate}
+                  </Text>
+                ) : null}
+                {item.startTime ? (
+                  <Text style={{ fontSize: 10, color: colors.primary, fontWeight: '600' }}>
+                    🕒 {formatTaskTime(item, selectedChecklistDate)}
+                  </Text>
+                ) : null}
+              </View>
+            </Pressable>
+
+            <View style={styles.metaWrapper}>
+              <View
+                style={[
+                  styles.priorityBadge,
+                  {
+                    backgroundColor:
+                      item.priority === 'high'
+                        ? `${colors.error}15`
+                        : item.priority === 'medium'
+                        ? `${colors.warning}15`
+                        : `${colors.success}15`,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.priorityText,
+                    {
+                      color:
+                        item.priority === 'high'
+                          ? colors.error
+                          : item.priority === 'medium'
+                          ? colors.warning
+                          : colors.success,
+                      fontSize: 9,
+                      fontFamily: theme.typography.fontFamily.bold,
+                    },
+                  ]}
+                >
+                  {item.priority.toUpperCase()}
+                </Text>
+              </View>
+              <Pressable onPress={() => deleteTask(item.id, item.title)} style={styles.deleteButton}>
+                <Ionicons name="trash-outline" size={16} color={colors.textMuted} />
+              </Pressable>
+            </View>
           </View>
-        </View>
-      </Card>
+        </Card>
+      </Animated.View>
     );
   };
 
@@ -835,14 +1056,14 @@ export default function TasksScreen() {
     let displayEndTime = item.endTime || '';
     if (item.endTime && item.isTaskLink) {
       const isStartDay = item.dueDate === selectedChecklistDate;
-      const isOvernight = item.endTime < item.sortTime;
+      const isOvernight = item.startTime && item.endTime < item.startTime;
       if (isOvernight && isStartDay) {
         displayEndTime = `Next Day ${item.endTime}`;
       }
     }
 
     return (
-      <View key={item.id} style={styles.timelineRow}>
+      <Animated.View key={item.id} layout={LinearTransition.springify()} style={styles.timelineRow}>
         {/* Left Side: Start Time (e.g. 06:00, ALL DAY, or MISSED) */}
         <View style={styles.timeWrapper}>
           <Text
@@ -963,13 +1184,23 @@ export default function TasksScreen() {
                     <Text style={styles.nowBadgeText}>NOW</Text>
                   </View>
                 )}
-                {/* Delete button placed in header flex group to prevent bottom overlapping */}
-                <Pressable
-                  onPress={() => handleDeletePress(item)}
-                  style={{ padding: 4 }}
-                >
-                  <Ionicons name="trash-outline" size={16} color={colors.textMuted} />
-                </Pressable>
+                {!item.isMissedRoutine && (
+                  <>
+                    <Pressable
+                      onPress={() => openRoutineEdit(item)}
+                      style={{ padding: 4, marginRight: 2 }}
+                    >
+                      <Ionicons name="create-outline" size={16} color={colors.textMuted} />
+                    </Pressable>
+                    {/* Delete button placed in header flex group to prevent bottom overlapping */}
+                    <Pressable
+                      onPress={() => handleDeletePress(item)}
+                      style={{ padding: 4 }}
+                    >
+                      <Ionicons name="trash-outline" size={16} color={colors.textMuted} />
+                    </Pressable>
+                  </>
+                )}
               </View>
             </View>
             {item.details ? (
@@ -997,6 +1228,7 @@ export default function TasksScreen() {
 
             {/* Bottom Meta Row containing Repetition Badge & End Time aligned to bottom right */}
             <View style={styles.routineMetaRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <View
                 style={[
                   styles.frequencyBadge,
@@ -1035,6 +1267,14 @@ export default function TasksScreen() {
                   {item.frequency ? item.frequency.toUpperCase() : 'DAILY'}
                 </Text>
               </View>
+              {item.streak >= 2 && (
+                <View style={[styles.frequencyBadge, { backgroundColor: '#E67E2218', marginLeft: 6 }]}>
+                  <Text style={[styles.frequencyText, { color: '#E67E22', fontFamily: theme.typography.fontFamily.bold }]}>
+                    🔥 {item.streak} {item.frequency === 'weekly' ? 'WK' : item.frequency === 'monthly' ? 'MO' : 'DAY'} STREAK
+                  </Text>
+                </View>
+              )}
+              </View>
 
               {/* End Time Tag - displayed on the bottom right of the card without overlaps */}
               {displayEndTime ? (
@@ -1045,14 +1285,14 @@ export default function TasksScreen() {
             </View>
           </Card>
         </View>
-      </View>
+      </Animated.View>
     );
   };
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header Title Row */}
-      <View style={[styles.headerRow, { paddingHorizontal: spacing.lg, marginBottom: spacing.sm }]}>
+      <View style={[styles.headerRow, { paddingHorizontal: spacing.lg, marginBottom: spacing.sm, marginTop: Math.max(12, insets.top) }]}>
         <Text
           style={[
             styles.screenTitle,
@@ -1065,19 +1305,6 @@ export default function TasksScreen() {
         >
           Tasks
         </Text>
-        <Pressable
-          onPress={() => {
-            if (selectedChecklistDate < todayStr) {
-              Alert.alert('Restricted Action', 'Adding tasks/routines for past dates is disabled.');
-              return;
-            }
-            setPrefilledDate(selectedChecklistDate); // Ensure the selected date is bridged to the creation sheets!
-            setActiveSheet(activeTab === 'checklist' ? 'task' : 'routine');
-          }}
-          style={styles.headerAddBtn}
-        >
-          <Ionicons name="add-circle-outline" size={28} color={colors.primary} />
-        </Pressable>
       </View>
 
       {/* Segmented Top Control (Checklist vs Daily Routine) */}
@@ -1131,15 +1358,15 @@ export default function TasksScreen() {
           contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingVertical: 8 }}
         >
           {DAYS_OF_WEEK.map((day) => {
-            const isSelected = selectedDay === day.key;
+            const isSelected = selectedChecklistDate === day.key;
             const isPast = day.isPast;
             const isCompleted = isDayFullyCompleted(day.fullDateStr);
+            const isMissed = isDayMissed(day.fullDateStr);
             
             return (
               <Pressable
                 key={day.key}
                 onPress={() => {
-                  setSelectedDay(day.key);
                   setSelectedChecklistDate(day.fullDateStr);
                 }}
                 style={[
@@ -1147,18 +1374,22 @@ export default function TasksScreen() {
                   {
                     backgroundColor: isSelected
                       ? colors.primary
-                      : isCompleted && isPast
+                      : isMissed && isPast
+                      ? `${colors.error}10`
+                      : isCompleted
                       ? `${colors.success}10`
                       : colors.surface,
                     borderColor: isSelected
                       ? colors.primary
+                      : isMissed && isPast
+                      ? colors.error
+                      : isCompleted
+                      ? colors.success
                       : day.isToday
                       ? colors.primary
-                      : isCompleted && isPast
-                      ? colors.success
                       : colors.border,
                     borderWidth: day.isToday ? 2.5 : 1,
-                    opacity: isPast && !isSelected ? 0.65 : 1, // Visual opacity indicator for past dates
+                    opacity: isPast && !isSelected ? 0.8 : 1,
                   },
                 ]}
               >
@@ -1171,11 +1402,6 @@ export default function TasksScreen() {
                 <Text style={[styles.dayMonthText, { color: isSelected ? '#FFFFFF' : colors.textMuted }]}>
                   {day.month}
                 </Text>
-                {isCompleted && isPast && !isSelected && (
-                  <View style={styles.completedBadgeCheck}>
-                    <Ionicons name="checkmark-circle" size={10} color={colors.success} />
-                  </View>
-                )}
               </Pressable>
             );
           })}
@@ -1266,7 +1492,7 @@ export default function TasksScreen() {
       ) : (
         /* ================= DAILY ROUTINE VIEW ================= */
         <View style={{ flex: 1, marginTop: 8 }}>
-          {loading ? (
+          {loading || routinesLoadedFor !== selectedChecklistDate ? (
             <View style={styles.center}>
               <LoadingState type="spinner" />
             </View>
@@ -1297,7 +1523,7 @@ export default function TasksScreen() {
       )}
 
       {/* Calendar View Explorer Modal */}
-      <Modal visible={isCalendarVisible} animationType="slide" presentationStyle="overFullScreen">
+      <Modal visible={isCalendarVisible} animationType="slide" presentationStyle="overFullScreen" onRequestClose={() => setIsCalendarVisible(false)}>
         <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
           <View style={[styles.modalHeader, { borderColor: colors.border }]}>
             <Pressable onPress={() => setIsCalendarVisible(false)} style={styles.modalCloseBtn}>
@@ -1398,9 +1624,9 @@ export default function TasksScreen() {
 
       {/* Task Details Edit Modal */}
       {activeTask && (
-        <Modal visible={isEditModalVisible} animationType="slide" presentationStyle="overFullScreen">
-          <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
-            <View style={[styles.modalHeader, { borderColor: colors.border }]}>
+        <Modal visible={isEditModalVisible} animationType="slide" presentationStyle="overFullScreen" onRequestClose={() => setIsEditModalVisible(false)}>
+          <KeyboardSafeView style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+            <View style={[styles.modalHeader, { borderColor: colors.border, marginTop: Math.max(12, insets.top) }]}>
               <Pressable onPress={() => setIsEditModalVisible(false)} style={styles.modalCloseBtn}>
                 <Ionicons name="chevron-back" size={24} color={colors.text} />
               </Pressable>
@@ -1412,7 +1638,7 @@ export default function TasksScreen() {
               </Pressable>
             </View>
 
-            <ScrollView contentContainerStyle={[styles.modalScroll, { padding: spacing.lg }]} showsVerticalScrollIndicator={false}>
+            <ScrollView contentContainerStyle={[styles.modalScroll, { padding: spacing.lg }]} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
               <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Title</Text>
               <TextInput
                 style={[
@@ -1552,20 +1778,158 @@ export default function TasksScreen() {
                 style={{ marginTop: spacing.xl }}
               />
             </ScrollView>
-          </View>
+            {renderTimePicker()}
+          </KeyboardSafeView>
         </Modal>
       )}
 
-      {/* Shared TimePicker clock modal */}
-      <TimePickerModal
-        isVisible={timePickerTarget !== null}
-        initialTime={timePickerTarget?.value || new Date().toTimeString().slice(0, 5)}
-        onClose={() => setTimePickerTarget(null)}
-        onConfirm={(selectedTime) => {
-          timePickerTarget?.onChange(selectedTime);
-          setTimePickerTarget(null);
-        }}
-      />
+      {/* Routine Edit Modal */}
+      {activeRoutine && (
+        <Modal visible={isRoutineEditVisible} animationType="slide" presentationStyle="overFullScreen" onRequestClose={() => setIsRoutineEditVisible(false)}>
+          <KeyboardSafeView style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+            <View style={[styles.modalHeader, { borderColor: colors.border, marginTop: Math.max(12, insets.top) }]}>
+              <Pressable onPress={() => setIsRoutineEditVisible(false)} style={styles.modalCloseBtn}>
+                <Ionicons name="chevron-back" size={24} color={colors.text} />
+              </Pressable>
+              <Text style={[styles.modalTitle, { color: colors.text, fontFamily: theme.typography.fontFamily.bold }]}>
+                Edit Routine
+              </Text>
+              <Pressable onPress={() => deleteRoutine(activeRoutine.id, activeRoutine.title)} style={styles.modalDeleteBtn}>
+                <Ionicons name="trash-outline" size={20} color={colors.error} />
+              </Pressable>
+            </View>
+
+            <ScrollView contentContainerStyle={[styles.modalScroll, { padding: spacing.lg }]} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
+              <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Title</Text>
+              <TextInput
+                style={[
+                  styles.titleInput,
+                  {
+                    color: colors.text,
+                    fontFamily: theme.typography.fontFamily.bold,
+                    backgroundColor: colors.surface,
+                    borderColor: colors.border,
+                    borderRadius: roundness.md,
+                    padding: spacing.md,
+                  },
+                ]}
+                value={editRoutineTitle}
+                onChangeText={setEditRoutineTitle}
+                placeholder="Routine Title"
+                placeholderTextColor={colors.textMuted}
+              />
+
+              <Text style={[styles.sectionLabel, { color: colors.textSecondary, marginTop: spacing.md }]}>Details</Text>
+              <TextInput
+                style={[
+                  styles.contentInput,
+                  {
+                    color: colors.text,
+                    fontFamily: theme.typography.fontFamily.regular,
+                    backgroundColor: colors.surface,
+                    borderColor: colors.border,
+                    borderRadius: roundness.md,
+                    padding: spacing.md,
+                  },
+                ]}
+                value={editRoutineDetails}
+                onChangeText={setEditRoutineDetails}
+                placeholder="Routine details..."
+                placeholderTextColor={colors.textMuted}
+                multiline
+                textAlignVertical="top"
+              />
+
+              <Text style={[styles.sectionLabel, { color: colors.textSecondary, marginTop: spacing.md }]}>Repeats</Text>
+              <View style={styles.modalCategoryRow}>
+                {['daily', 'weekly', 'monthly', 'once'].map((f) => {
+                  const isFreqSelected = editRoutineFrequency === f;
+                  return (
+                    <Pressable
+                      key={f}
+                      onPress={() => setEditRoutineFrequency(f)}
+                      style={[
+                        styles.modalCategoryBadge,
+                        {
+                          backgroundColor: isFreqSelected ? colors.primary : colors.surface,
+                          borderColor: isFreqSelected ? colors.primary : colors.border,
+                        },
+                      ]}
+                    >
+                      <Text style={[styles.modalCategoryText, { color: isFreqSelected ? '#FFFFFF' : colors.textSecondary }]}>
+                        {f.toUpperCase()}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              {/* Start & End time inputs with clock pickers */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: spacing.md }}>
+                <View style={{ flex: 1, marginRight: 6 }}>
+                  <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Start Time</Text>
+                  <Pressable onPress={() => setTimePickerTarget({ fieldName: 'editRoutineTime', value: editRoutineTime, onChange: setEditRoutineTime })}>
+                    <View pointerEvents="none">
+                      <TextInput
+                        style={[
+                          styles.titleInput,
+                          {
+                            color: colors.text,
+                            backgroundColor: colors.surface,
+                            borderColor: colors.border,
+                            borderRadius: roundness.md,
+                            padding: spacing.md,
+                          },
+                        ]}
+                        value={editRoutineTime}
+                        placeholder="All day"
+                        placeholderTextColor={colors.textMuted}
+                      />
+                    </View>
+                  </Pressable>
+                </View>
+                <View style={{ flex: 1, marginLeft: 6 }}>
+                  <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>End Time</Text>
+                  <Pressable onPress={() => setTimePickerTarget({ fieldName: 'editRoutineEndTime', value: editRoutineEndTime, onChange: setEditRoutineEndTime })}>
+                    <View pointerEvents="none">
+                      <TextInput
+                        style={[
+                          styles.titleInput,
+                          {
+                            color: colors.text,
+                            backgroundColor: colors.surface,
+                            borderColor: colors.border,
+                            borderRadius: roundness.md,
+                            padding: spacing.md,
+                          },
+                        ]}
+                        value={editRoutineEndTime}
+                        placeholder="Optional"
+                        placeholderTextColor={colors.textMuted}
+                      />
+                    </View>
+                  </Pressable>
+                </View>
+              </View>
+
+              {activeRoutine.streak >= 2 && (
+                <Text style={{ color: '#E67E22', fontFamily: theme.typography.fontFamily.bold, marginTop: spacing.md }}>
+                  🔥 Current streak: {activeRoutine.streak}
+                </Text>
+              )}
+
+              <Button
+                title="Save Changes"
+                onPress={saveRoutineChanges}
+                variant="primary"
+                style={{ marginTop: spacing.xl }}
+              />
+            </ScrollView>
+            {renderTimePicker()}
+          </KeyboardSafeView>
+        </Modal>
+      )}
+
     </View>
   );
 }

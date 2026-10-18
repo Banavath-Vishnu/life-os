@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, Text, ScrollView, Pressable, Alert, Modal, Dimensions, Image, Animated } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { AppState } from 'react-native';
+import { StyleSheet, View, Text, ScrollView, Pressable, Alert, Dimensions, Image, Animated } from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import Svg, { Path, Circle, Defs, LinearGradient, Stop, G, Line } from 'react-native-svg';
 import { useTheme, getCategoryColor } from '../../src/core/theme/theme';
 import { useStore } from '../../src/core/store/store';
@@ -8,6 +9,11 @@ import Card from '../../src/shared/components/Card';
 import LoadingState from '../../src/shared/components/LoadingState';
 import { selectAll, runQuery } from '../../src/core/db/sqlite';
 import { useRouter } from 'expo-router';
+import { getLocalTodayStr, getYesterdayStr, getNextDayStr, getLocalDateObject, formatLocalDate } from '../../src/core/utils/date';
+import { scheduleTaskNotifications } from '../../src/core/notifications/notificationManager';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
+import BrandLogo from '../../src/shared/components/BrandLogo';
 
 // Bulletproof parser for "2026-06-28T05:43"
 const parseTime = (isoString) => {
@@ -27,6 +33,7 @@ export default function HomeScreen() {
   const { theme } = useTheme();
   const { colors, spacing, typography, roundness } = theme;
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   const user = useStore((state) => state.user);
 
@@ -38,21 +45,24 @@ export default function HomeScreen() {
   const expensesVersion = useStore((state) => state.expensesVersion);
   const targetsVersion = useStore((state) => state.targetsVersion);
   const notificationsVersion = useStore((state) => state.notificationsVersion);
+  const hapticsEnabled = useStore((state) => state.hapticsEnabled);
 
   // Zustand tab routing setters
   const setTasksSubTab = useStore((state) => state.setTasksSubTab);
   const setProgressSubTab = useStore((state) => state.setProgressSubTab);
   const triggerTasksUpdate = useStore((state) => state.triggerTasksUpdate);
+  const triggerRoutineUpdate = useStore((state) => state.triggerRoutineUpdate);
 
   const [loading, setLoading] = useState(true);
-  const [isDrawerVisible, setIsDrawerVisible] = useState(false);
   const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
 
   // Weather & Geolocation Live States
   const [locationName, setLocationName] = useState('Hyderabad, IN');
   const [currentTemp, setCurrentTemp] = useState('26.5°C');
-  const [sunriseTime, setSunriseTime] = useState('6:02 AM');
-  const [sunsetTime, setSunsetTime] = useState('7:24 PM');
+  const sunriseTime = useStore((state) => state.sunriseTime) || '6:02 AM';
+  const sunsetTime = useStore((state) => state.sunsetTime) || '7:24 PM';
+  const setSunriseTime = useStore((state) => state.setSunriseTime);
+  const setSunsetTime = useStore((state) => state.setSunsetTime);
 
   // Live Metrics
   const [tasksCount, setTasksCount] = useState({ completed: 0, total: 0 });
@@ -118,47 +128,48 @@ export default function HomeScreen() {
 
   const loadDashboardData = async () => {
     try {
-      const todayStr = new Date().toISOString().split('T')[0];
-      const startOfDay = new Date();
-      startOfDay.setHours(0, 0, 0, 0);
-      const startOfDayStr = startOfDay.toISOString();
+      const todayStr = getLocalTodayStr();
 
-      // Date utilities for overnight tasks
-      const getYesterdayStr = (dateStr) => {
-        const d = new Date(dateStr);
-        d.setDate(d.getDate() - 1);
-        return d.toISOString().split('T')[0];
-      };
       const isTaskActiveOnDate = (task, dateStr) => {
-        if (task.dueDate === dateStr) return true;
-        if (task.startTime && task.endTime && task.endTime < task.startTime) {
-          const yesterday = getYesterdayStr(dateStr);
-          if (task.dueDate === yesterday) return true;
+        if (task.status === 'completed') {
+          return task.completedDate === dateStr;
+        }
+        if (task.status === 'pending') {
+          const activeDate = task.dueDate < todayStr ? todayStr : task.dueDate;
+          if (dateStr === activeDate) return true;
+          if (task.startTime && task.endTime && task.endTime < task.startTime) {
+            const yesterday = getYesterdayStr(dateStr);
+            if (task.dueDate === yesterday) return true;
+          }
         }
         return false;
       };
 
       // Recurrence checker for Weekly & Monthly routines (with end-of-month fallback)
       const isSameMonthlyDay = (scheduledDateStr, targetDateStr) => {
-        const sDate = new Date(scheduledDateStr);
-        const tDate = new Date(targetDateStr);
+        const sDate = getLocalDateObject(scheduledDateStr);
+        const tDate = getLocalDateObject(targetDateStr);
         const targetDay = sDate.getDate();
-        
+
         const tYear = tDate.getFullYear();
         const tMonth = tDate.getMonth();
         const daysInTargetMonth = new Date(tYear, tMonth + 1, 0).getDate();
-        
+
         const actualTargetDay = Math.min(targetDay, daysInTargetMonth);
         return tDate.getDate() === actualTargetDay;
       };
 
       const isRoutineActiveOnDate = (r, dateStr) => {
         if (r.frequency === 'daily') return true;
+        // Older weekly/monthly routines were saved without a scheduledDate; anchor them to their creation day
+        const anchorDate = r.scheduledDate || (r.updatedAt ? formatLocalDate(new Date(r.updatedAt)) : null);
         if (r.frequency === 'weekly') {
-          return new Date(r.scheduledDate).getDay() === new Date(dateStr).getDay();
+          if (!anchorDate) return false;
+          return getLocalDateObject(anchorDate).getDay() === getLocalDateObject(dateStr).getDay();
         }
         if (r.frequency === 'monthly') {
-          return isSameMonthlyDay(r.scheduledDate, dateStr);
+          if (!anchorDate) return false;
+          return isSameMonthlyDay(anchorDate, dateStr);
         }
         if (r.frequency === 'once') {
           return r.scheduledDate === dateStr;
@@ -169,14 +180,35 @@ export default function HomeScreen() {
       // Task expired end-time overdue checker
       const isTaskOverdueOnDate = (task, dateStr) => {
         if (task.status !== 'pending' || !task.dueDate) return false;
-        
-        if (task.dueDate < dateStr) return true;
-        
+
+        // Case 1: Any day after the due date (pending tasks roll over until done),
+        // except an overnight task from yesterday that is still running
+        if (task.dueDate < dateStr) {
+          // Future days haven't happened yet, so nothing can be missed on them
+          if (dateStr > getLocalTodayStr()) return false;
+          const isOvernight = task.startTime && task.endTime && task.endTime < task.startTime;
+          if (isOvernight && dateStr === getNextDayStr(task.dueDate) && dateStr === getLocalTodayStr()) {
+            const now = new Date();
+            const nowMins = now.getHours() * 60 + now.getMinutes();
+            const [endH, endM] = task.endTime.split(':').map(Number);
+            if (nowMins <= endH * 60 + endM) return false;
+          }
+          return true;
+        }
+
+        // Case 2: A past due date that ended with the task still pending
+        if (task.dueDate === dateStr && dateStr < getLocalTodayStr()) {
+          const isOvernight = task.startTime && task.endTime && task.endTime < task.startTime;
+          // overnight task from yesterday may still be running today
+          if (!(isOvernight && dateStr === getYesterdayStr(getLocalTodayStr()))) return true;
+        }
+
+        // Case 3: The due date itself, but past the end time
         if (task.dueDate === dateStr && task.endTime) {
           if (task.startTime && task.endTime < task.startTime) {
             return false; // Overnight task spans to next day
           }
-          const today = new Date().toISOString().split('T')[0];
+          const today = getLocalTodayStr();
           if (dateStr === today) {
             const now = new Date();
             const nowMins = now.getHours() * 60 + now.getMinutes();
@@ -185,25 +217,13 @@ export default function HomeScreen() {
             return nowMins > endMins;
           }
         }
-        
-        const yesterday = getYesterdayStr(dateStr);
-        if (task.dueDate === yesterday && task.startTime && task.endTime && task.endTime < task.startTime) {
-          const today = new Date().toISOString().split('T')[0];
-          if (dateStr === today) {
-            const now = new Date();
-            const nowMins = now.getHours() * 60 + now.getMinutes();
-            const [endH, endM] = task.endTime.split(':').map(Number);
-            const endMins = endH * 60 + endM;
-            return nowMins > endMins;
-          }
-        }
-        
+
         return false;
       };
 
       // 1. Tasks Metrics & List
       const allTasks = await selectAll('SELECT * FROM tasks ORDER BY id DESC');
-      const todayTasksList = allTasks.filter(t => isTaskActiveOnDate(t, todayStr) && !isTaskOverdueOnDate(t, todayStr));
+      const todayTasksList = allTasks.filter(t => isTaskActiveOnDate(t, todayStr));
       const completedTasks = todayTasksList.filter(t => t.status === 'completed').length;
       setTasksCount({ completed: completedTasks, total: todayTasksList.length });
       setTodayTasks(todayTasksList.slice(0, 3));
@@ -229,8 +249,32 @@ export default function HomeScreen() {
 
       const formattedRoutines = activeRoutines.map(r => ({
         ...r,
-        time: r.time,
-        sortTime: r.time,
+        time: r.time || 'ALL DAY', // no start time = all-day routine
+        sortTime: r.time || 'ALL DAY',
+        endTime: r.endTime
+      }));
+
+      // Routines not ticked yesterday show as MISSED today only
+      const yesterdayStr = getYesterdayStr(todayStr);
+      const yesterdayLogs = await selectAll(
+        "SELECT routineId FROM routine_logs WHERE logDate = ? AND status = 'completed'",
+        [yesterdayStr]
+      );
+      const doneYesterday = new Set((yesterdayLogs || []).map(l => l.routineId));
+      const missedRoutines = (allRoutines || []).filter(r => {
+        const anchorDate = r.scheduledDate || (r.updatedAt ? formatLocalDate(new Date(r.updatedAt)) : null);
+        if (!anchorDate || anchorDate > yesterdayStr) return false; // didn't exist yet
+        return isRoutineActiveOnDate(r, yesterdayStr) && !doneYesterday.has(r.id);
+      }).map(r => ({
+        id: `routine-missed-${r.id}`,
+        title: r.title,
+        time: 'MISSED',
+        sortTime: 'ALL DAY',
+        details: r.details,
+        frequency: r.frequency,
+        status: 'pending',
+        isOverdue: true,
+        dueDate: yesterdayStr,
         endTime: r.endTime
       }));
 
@@ -251,7 +295,10 @@ export default function HomeScreen() {
       }));
 
       // Load overdue tasks due yesterday or earlier that are still pending
-      const overdueTasks = allTasks.filter(t => isTaskOverdueOnDate(t, todayStr));
+      // Timeline: a missed task only shows on its due day (once expired) and the day after
+      const overdueTasks = allTasks.filter(t =>
+        isTaskOverdueOnDate(t, todayStr) && (t.dueDate === yesterdayStr || t.dueDate === todayStr)
+      );
       const formattedOverdueTasks = overdueTasks.map(t => ({
         id: `task-overdue-${t.id}`,
         title: t.title,
@@ -267,7 +314,7 @@ export default function HomeScreen() {
         endTime: t.endTime
       }));
 
-      const combinedRoutines = [...formattedOverdueTasks, ...formattedRoutines, ...taskRoutineItems];
+      const combinedRoutines = [...formattedOverdueTasks, ...missedRoutines, ...formattedRoutines, ...taskRoutineItems];
       combinedRoutines.sort((a, b) => {
         // Group 1: Overdue tasks go first
         const aOverdue = a.isOverdue;
@@ -297,7 +344,7 @@ export default function HomeScreen() {
       setTodayRoutines(combinedRoutines);
 
       // 4. Expenses Today calculation & Breakdown
-      const allExpenses = await selectAll('SELECT * FROM expenses WHERE date >= ?', [startOfDayStr]);
+      const allExpenses = await selectAll('SELECT * FROM expenses WHERE substr(date, 1, 10) = ?', [todayStr]);
       const spentToday = allExpenses.reduce((acc, curr) => acc + curr.amount, 0);
       setExpensesToday(spentToday);
 
@@ -331,10 +378,33 @@ export default function HomeScreen() {
     loadDashboardData();
   }, [tasksVersion, notesVersion, progressVersion, routineVersion, expensesVersion, targetsVersion, notificationsVersion]);
 
+  // Refresh when returning to the app (new day, expired task times)
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') loadDashboardData();
+    });
+    return () => sub.remove();
+  }, []);
+
+  // Reschedule or cancel a task's alerts after its status changes (mirrors the Tasks screen)
+  const rescheduleTaskAlerts = async (id, nextStatus) => {
+    const rows = await selectAll('SELECT * FROM tasks WHERE id = ?', [id]);
+    const { notificationSettings, notificationsEnabled } = useStore.getState();
+    if (rows && rows[0] && notificationsEnabled) {
+      await scheduleTaskNotifications({ ...rows[0], status: nextStatus }, notificationSettings);
+    }
+  };
+
   const handleToggleTask = async (id, currentStatus) => {
     try {
+      if (hapticsEnabled) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => { });
+      }
+      const todayStr = getLocalTodayStr();
       const nextStatus = currentStatus === 'completed' ? 'pending' : 'completed';
-      await runQuery('UPDATE tasks SET status = ? WHERE id = ?', [nextStatus, id]);
+      const completedDate = nextStatus === 'completed' ? todayStr : null;
+      await runQuery('UPDATE tasks SET status = ?, completedDate = ? WHERE id = ?', [nextStatus, completedDate, id]);
+      await rescheduleTaskAlerts(id, nextStatus);
       triggerTasksUpdate();
     } catch (e) {
       console.error(e);
@@ -343,11 +413,24 @@ export default function HomeScreen() {
 
   const handleToggleRoutine = async (id, currentStatus) => {
     try {
-      const todayStr = new Date().toISOString().split('T')[0];
-      if (String(id).startsWith('task-')) {
+      if (hapticsEnabled) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => { });
+      }
+      const todayStr = getLocalTodayStr();
+      if (String(id).startsWith('routine-missed-')) {
+        // Ticking a missed routine records it for yesterday, when it was due
+        await runQuery('INSERT OR IGNORE INTO routine_logs (routineId, logDate, status) VALUES (?, ?, ?)', [
+          Number(String(id).replace('routine-missed-', '')),
+          getYesterdayStr(todayStr),
+          'completed'
+        ]);
+        triggerRoutineUpdate();
+      } else if (String(id).startsWith('task-')) {
         const originalTaskId = Number(String(id).replace('task-overdue-', '').replace('task-', ''));
         const nextStatus = currentStatus === 'completed' ? 'pending' : 'completed';
-        await runQuery('UPDATE tasks SET status = ? WHERE id = ?', [nextStatus, originalTaskId]);
+        const completedDate = nextStatus === 'completed' ? todayStr : null;
+        await runQuery('UPDATE tasks SET status = ?, completedDate = ? WHERE id = ?', [nextStatus, completedDate, originalTaskId]);
+        await rescheduleTaskAlerts(originalTaskId, nextStatus);
         triggerTasksUpdate();
       } else {
         if (currentStatus === 'completed') {
@@ -359,6 +442,7 @@ export default function HomeScreen() {
             'completed'
           ]);
         }
+        triggerRoutineUpdate();
       }
       loadDashboardData();
     } catch (e) {
@@ -387,11 +471,6 @@ export default function HomeScreen() {
     router.push('/progress');
   };
 
-  const navigateFromDrawer = (action) => {
-    setIsDrawerVisible(false);
-    setTimeout(action, 250);
-  };
-
   // Helper parser: "6:02 AM" -> minutes from midnight
   const parseTimeToMinutes = (timeStr, defaultVal) => {
     if (!timeStr) return defaultVal;
@@ -412,7 +491,7 @@ export default function HomeScreen() {
   const currentMins = now.getHours() * 60 + now.getMinutes();
   const sunriseMins = parseTimeToMinutes(sunriseTime, 6 * 60 + 2); // 6:02 AM
   const sunsetMins = parseTimeToMinutes(sunsetTime, 19 * 60 + 24); // 7:24 PM
-  const isNight = now.getHours() >= 23 || now.getHours() < 4;
+  const isNight = currentMins >= sunsetMins || currentMins < sunriseMins;
 
   // Calculate coordinates dynamically on solar/lunar arch path
   const getPositionCoords = () => {
@@ -454,12 +533,16 @@ export default function HomeScreen() {
     if (!todayRoutines || todayRoutines.length === 0) return null;
     const now = new Date();
     const currentMins = now.getHours() * 60 + now.getMinutes();
-    const itemsWithMins = todayRoutines.map(item => {
+    // Only real routines get the NOW marker (not linked/overdue/all-day tasks)
+    const itemsWithMins = todayRoutines.filter(item => !item.isTaskLink && !item.isOverdue && item.time && item.time.includes(':')).map(item => {
+      if (!item.time || !item.time.includes(':')) {
+        return { id: item.id, mins: 0 };
+      }
       const [h, m] = item.time.split(':').map(Number);
-      return { id: item.id, mins: h * 60 + m };
+      return { id: item.id, mins: (isNaN(h) || isNaN(m)) ? 0 : h * 60 + m };
     });
     itemsWithMins.sort((a, b) => a.mins - b.mins);
-    let activeItem = itemsWithMins[0];
+    let activeItem = null;
     for (let i = 0; i < itemsWithMins.length; i++) {
       if (itemsWithMins[i].mins <= currentMins) {
         activeItem = itemsWithMins[i];
@@ -482,7 +565,9 @@ export default function HomeScreen() {
   const foodSpent = expenseCategories['Food & Dining'] || 0;
   const transportSpent = expenseCategories['Transport'] || 0;
   const shoppingSpent = expenseCategories['Shopping'] || 0;
-  const otherSpent = (expenseCategories['Entertainment'] || 0) + (expenseCategories['Other'] || 0);
+  // Everything that isn't Food/Transport/Shopping (incl. user-created categories) counts as Other
+  const allCategorySpent = Object.values(expenseCategories).reduce((acc, v) => acc + (v || 0), 0);
+  const otherSpent = Math.max(0, allCategorySpent - foodSpent - transportSpent - shoppingSpent);
   const totalCategorySpent = foodSpent + transportSpent + shoppingSpent + otherSpent;
 
   return (
@@ -490,10 +575,8 @@ export default function HomeScreen() {
       <ScrollView contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
 
         {/* Top Header Row */}
-        <View style={styles.headerBar}>
-          <Pressable onPress={() => setIsDrawerVisible(true)} style={styles.headerBtn}>
-            <Ionicons name="menu-outline" size={24} color={colors.text} />
-          </Pressable>
+        <View style={[styles.headerBar, { marginTop: Math.max(12, insets.top) }]}>
+          <View style={{ width: 38, height: 38 }} />
           <View style={styles.avatarWrapper}>
             <View style={[styles.avatar, { backgroundColor: colors.primary, overflow: 'hidden' }]}>
               {user.avatar ? (
@@ -592,21 +675,21 @@ export default function HomeScreen() {
             {!isNight && (
               <>
                 <G opacity="0.65" transform="translate(45, 20) scale(0.6)">
-                  <Path 
-                    d="M 10,25 A 8,8 0 0,1 22,17 A 12,12 0 0,1 46,19 A 9,9 0 0,1 58,25 A 8,8 0 0,1 54,35 L 14,35 A 8,8 0 0,1 10,25 Z" 
-                    fill="#FFFFFF" 
+                  <Path
+                    d="M 10,25 A 8,8 0 0,1 22,17 A 12,12 0 0,1 46,19 A 9,9 0 0,1 58,25 A 8,8 0 0,1 54,35 L 14,35 A 8,8 0 0,1 10,25 Z"
+                    fill="#FFFFFF"
                   />
                 </G>
                 <G opacity="0.5" transform="translate(200, 32) scale(0.5)">
-                  <Path 
-                    d="M 10,25 A 8,8 0 0,1 22,17 A 12,12 0 0,1 46,19 A 9,9 0 0,1 58,25 A 8,8 0 0,1 54,35 L 14,35 A 8,8 0 0,1 10,25 Z" 
-                    fill="#FFFFFF" 
+                  <Path
+                    d="M 10,25 A 8,8 0 0,1 22,17 A 12,12 0 0,1 46,19 A 9,9 0 0,1 58,25 A 8,8 0 0,1 54,35 L 14,35 A 8,8 0 0,1 10,25 Z"
+                    fill="#FFFFFF"
                   />
                 </G>
                 <G opacity="0.55" transform="translate(120, 15) scale(0.45)">
-                  <Path 
-                    d="M 10,25 A 8,8 0 0,1 22,17 A 12,12 0 0,1 46,19 A 9,9 0 0,1 58,25 A 8,8 0 0,1 54,35 L 14,35 A 8,8 0 0,1 10,25 Z" 
-                    fill="#FFFFFF" 
+                  <Path
+                    d="M 10,25 A 8,8 0 0,1 22,17 A 12,12 0 0,1 46,19 A 9,9 0 0,1 58,25 A 8,8 0 0,1 54,35 L 14,35 A 8,8 0 0,1 10,25 Z"
+                    fill="#FFFFFF"
                   />
                 </G>
               </>
@@ -621,7 +704,7 @@ export default function HomeScreen() {
                 <Line x1={activeCoords.x} y1={activeCoords.y + 18} x2={activeCoords.x} y2={activeCoords.y + 23} stroke="#F1C40F" strokeWidth="2" strokeLinecap="round" />
                 <Line x1={activeCoords.x - 18} y1={activeCoords.y} x2={activeCoords.x - 23} y2={activeCoords.y} stroke="#F1C40F" strokeWidth="2" strokeLinecap="round" />
                 <Line x1={activeCoords.x + 18} y1={activeCoords.y} x2={activeCoords.x + 23} y2={activeCoords.y} stroke="#F1C40F" strokeWidth="2" strokeLinecap="round" />
-                
+
                 <Line x1={activeCoords.x - 13} y1={activeCoords.y - 13} x2={activeCoords.x - 17} y2={activeCoords.y - 17} stroke="#F1C40F" strokeWidth="2" strokeLinecap="round" />
                 <Line x1={activeCoords.x + 13} y1={activeCoords.y - 13} x2={activeCoords.x + 17} y2={activeCoords.y - 17} stroke="#F1C40F" strokeWidth="2" strokeLinecap="round" />
                 <Line x1={activeCoords.x - 13} y1={activeCoords.y + 13} x2={activeCoords.x - 17} y2={activeCoords.y + 17} stroke="#F1C40F" strokeWidth="2" strokeLinecap="round" />
@@ -734,7 +817,7 @@ export default function HomeScreen() {
               </View>
               <Text style={[styles.bentoLabel, { color: colors.textSecondary }]}>Expenses</Text>
               <Text style={[styles.bentoVal, { color: colors.text, fontFamily: theme.typography.fontFamily.bold }]}>
-                ${expensesToday.toFixed(2)}
+                ₹{expensesToday.toFixed(2)}
               </Text>
               <Text style={{ fontSize: 9, color: colors.textMuted }}>Today</Text>
             </Card>
@@ -792,14 +875,14 @@ export default function HomeScreen() {
               );
             })
           )}
-          
+
           {missedTasksCount > 0 && (
-            <Pressable 
+            <Pressable
               onPress={navigateToTasksChecklist}
-              style={{ 
-                borderTopWidth: 1, 
-                borderTopColor: colors.border, 
-                paddingTop: 10, 
+              style={{
+                borderTopWidth: 1,
+                borderTopColor: colors.border,
+                paddingTop: 10,
                 marginTop: 6,
                 flexDirection: 'row',
                 alignItems: 'center',
@@ -808,7 +891,7 @@ export default function HomeScreen() {
             >
               <Ionicons name="warning-outline" size={14} color={colors.warning} style={{ marginRight: 6 }} />
               <Text style={{ fontSize: 11, color: colors.warning, fontWeight: '700' }}>
-                {missedTasksCount} pending task{missedTasksCount > 1 ? 's' : ''} from past days
+                {missedTasksCount} missed task{missedTasksCount > 1 ? 's' : ''} need{missedTasksCount > 1 ? '' : 's'} attention
               </Text>
             </Pressable>
           )}
@@ -933,12 +1016,12 @@ export default function HomeScreen() {
                     {transportSpent > 0 && (
                       <Circle cx="20" cy="20" r="15.915" fill="transparent" stroke={getCategoryColor('Transport')} strokeWidth="5"
                         strokeDasharray={`${Math.round((transportSpent / totalCategorySpent) * 100)} ${100 - Math.round((transportSpent / totalCategorySpent) * 100)}`}
-                        strokeDashoffset={`-${Math.round((foodSpent / totalCategorySpent) * 100) - 25}`} />
+                        strokeDashoffset={25 - Math.round((foodSpent / totalCategorySpent) * 100)} />
                     )}
                     {shoppingSpent > 0 && (
                       <Circle cx="20" cy="20" r="15.915" fill="transparent" stroke={getCategoryColor('Shopping')} strokeWidth="5"
                         strokeDasharray={`${Math.round((shoppingSpent / totalCategorySpent) * 100)} ${100 - Math.round((shoppingSpent / totalCategorySpent) * 100)}`}
-                        strokeDashoffset={`-${Math.round((foodSpent / totalCategorySpent) * 100) + Math.round((transportSpent / totalCategorySpent) * 100) - 25}`} />
+                        strokeDashoffset={25 - Math.round((foodSpent / totalCategorySpent) * 100) - Math.round((transportSpent / totalCategorySpent) * 100)} />
                     )}
                   </Svg>
                 </View>
@@ -962,7 +1045,7 @@ export default function HomeScreen() {
               <View style={[styles.totalSpentRow, { borderTopColor: colors.border }]}>
                 <Text style={{ fontSize: 10, color: colors.textSecondary }}>Total Today</Text>
                 <Text style={[styles.totalSpentVal, { color: colors.text, fontFamily: theme.typography.fontFamily.bold }]}>
-                  ${expensesToday.toFixed(2)}
+                  ₹{expensesToday.toFixed(2)}
                 </Text>
               </View>
             </Card>
@@ -984,166 +1067,33 @@ export default function HomeScreen() {
             No notes created yet.
           </Text>
         ) : (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 4 }}>
+          <View style={{ width: '100%' }}>
             {recentNotes.map((note) => (
-              <Pressable key={note.id} onPress={() => router.push('/notes')}>
-                <Card style={styles.recentNoteCard} bordered>
+              <Pressable key={note.id} onPress={() => router.push({ pathname: '/notes', params: { openNoteId: String(note.id) } })} style={{ width: '100%' }}>
+                <Card style={[styles.recentNoteCard, { marginRight: 0 }]} bordered>
                   <View style={styles.noteCardHeader}>
                     <View style={[styles.noteCategoryDot, { backgroundColor: note.color || colors.primary }]} />
                     <Text style={styles.noteCategoryText} numberOfLines={1}>{note.category}</Text>
                   </View>
-                  <Text style={[styles.recentNoteTitle, { color: colors.text, fontFamily: theme.typography.fontFamily.bold }]} numberOfLines={1}>
+                  <Text style={[styles.recentNoteTitle, { color: colors.text, fontFamily: theme.typography.fontFamily.bold, marginTop: 4 }]} numberOfLines={1}>
                     {note.title}
                   </Text>
-                  <Text style={{ fontSize: 10, color: colors.textMuted, marginTop: 4 }}>
+                  {note.content ? (
+                    <Text style={{ fontSize: 11, color: colors.textSecondary, fontFamily: theme.typography.fontFamily.regular, marginTop: 2 }} numberOfLines={1}>
+                      {note.content}
+                    </Text>
+                  ) : null}
+                  <Text style={{ fontSize: 9, color: colors.textMuted, marginTop: 6 }}>
                     {new Date(note.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                   </Text>
                 </Card>
               </Pressable>
             ))}
-          </ScrollView>
+          </View>
         )}
 
       </ScrollView>
 
-      {/* Hamburger Navigation Drawer Modal */}
-      <Modal
-        visible={isDrawerVisible}
-        animationType="none"
-        transparent
-        onRequestClose={() => setIsDrawerVisible(false)}
-      >
-        <Pressable onPress={() => setIsDrawerVisible(false)} style={styles.drawerOverlay}>
-          <Pressable style={[styles.drawerContent, { backgroundColor: colors.surface }]}>
-            <View style={{ flex: 1 }}>
-              {/* Drawer Header */}
-              <View style={[styles.drawerHeader, { borderBottomColor: colors.border }]}>
-                <Text style={[styles.drawerTitle, { color: colors.primary, fontFamily: theme.typography.fontFamily.bold }]}>
-                  LifeOS Suite
-                </Text>
-                <Pressable onPress={() => setIsDrawerVisible(false)} style={styles.drawerCloseBtn}>
-                  <Ionicons name="close-outline" size={24} color={colors.text} />
-                </Pressable>
-              </View>
-
-              {/* User profile card inside drawer */}
-              <View style={styles.drawerUserCard}>
-                <View style={[styles.drawerAvatar, { backgroundColor: colors.primary, overflow: 'hidden' }]}>
-                  {user?.avatar ? (
-                    <Image source={{ uri: user.avatar }} style={{ width: 40, height: 40, borderRadius: 20 }} />
-                  ) : (
-                    <Text style={styles.drawerAvatarText}>
-                      {user?.name ? user.name.split(' ').map((n) => n[0]).join('') : 'U'}
-                    </Text>
-                  )}
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }} numberOfLines={1}>
-                    {user?.name}
-                  </Text>
-                  <Text style={{ fontSize: 11, color: colors.textSecondary }} numberOfLines={1}>
-                    {user?.bio}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Drawer menu options */}
-              <ScrollView style={styles.drawerMenuSection} showsVerticalScrollIndicator={false}>
-                {/* 1. Home Command Center */}
-                <Pressable
-                  onPress={() => setIsDrawerVisible(false)}
-                  style={({ pressed }) => [
-                    styles.drawerItem,
-                    { backgroundColor: pressed ? `${colors.primary}10` : 'transparent' }
-                  ]}
-                >
-                  <Ionicons name="home-outline" size={20} color={colors.primary} />
-                  <Text style={[styles.drawerItemText, { color: colors.text }]}>Home Command Center</Text>
-                </Pressable>
-
-                {/* 2. Tasks Checklist */}
-                <Pressable
-                  onPress={() => navigateFromDrawer(navigateToTasksChecklist)}
-                  style={({ pressed }) => [
-                    styles.drawerItem,
-                    { backgroundColor: pressed ? `${colors.primary}10` : 'transparent' }
-                  ]}
-                >
-                  <Ionicons name="checkmark-done-circle-outline" size={20} color={colors.primary} />
-                  <Text style={[styles.drawerItemText, { color: colors.text }]}>Checklist Manager</Text>
-                </Pressable>
-
-                {/* 3. Daily Routine */}
-                <Pressable
-                  onPress={() => navigateFromDrawer(navigateToTasksRoutine)}
-                  style={({ pressed }) => [
-                    styles.drawerItem,
-                    { backgroundColor: pressed ? `${colors.primary}10` : 'transparent' }
-                  ]}
-                >
-                  <Ionicons name="barbell-outline" size={20} color={colors.primary} />
-                  <Text style={[styles.drawerItemText, { color: colors.text }]}>Daily Routine</Text>
-                </Pressable>
-
-                {/* 4. Notes Explorer */}
-                <Pressable
-                  onPress={() => navigateFromDrawer(() => router.push('/notes'))}
-                  style={({ pressed }) => [
-                    styles.drawerItem,
-                    { backgroundColor: pressed ? `${colors.primary}10` : 'transparent' }
-                  ]}
-                >
-                  <Ionicons name="document-text-outline" size={20} color={colors.primary} />
-                  <Text style={[styles.drawerItemText, { color: colors.text }]}>Notes Explorer</Text>
-                </Pressable>
-
-                {/* 5. Expenses Tracker */}
-                <Pressable
-                  onPress={() => navigateFromDrawer(navigateToExpenses)}
-                  style={({ pressed }) => [
-                    styles.drawerItem,
-                    { backgroundColor: pressed ? `${colors.primary}10` : 'transparent' }
-                  ]}
-                >
-                  <Ionicons name="wallet-outline" size={20} color={colors.primary} />
-                  <Text style={[styles.drawerItemText, { color: colors.text }]}>Expenses Tracker</Text>
-                </Pressable>
-
-                {/* 6. Targets Tracker */}
-                <Pressable
-                  onPress={() => navigateFromDrawer(navigateToTargets)}
-                  style={({ pressed }) => [
-                    styles.drawerItem,
-                    { backgroundColor: pressed ? `${colors.primary}10` : 'transparent' }
-                  ]}
-                >
-                  <Ionicons name="ribbon-outline" size={20} color={colors.primary} />
-                  <Text style={[styles.drawerItemText, { color: colors.text }]}>Targets Tracker</Text>
-                </Pressable>
-
-                {/* 7. Settings & Profile */}
-                <Pressable
-                  onPress={() => navigateFromDrawer(() => router.push('/profile'))}
-                  style={({ pressed }) => [
-                    styles.drawerItem,
-                    { backgroundColor: pressed ? `${colors.primary}10` : 'transparent' }
-                  ]}
-                >
-                  <Ionicons name="settings-outline" size={20} color={colors.primary} />
-                  <Text style={[styles.drawerItemText, { color: colors.text }]}>Settings & Profile</Text>
-                </Pressable>
-              </ScrollView>
-            </View>
-
-            {/* Drawer Footer branding */}
-            <View style={[styles.drawerFooter, { borderTopColor: colors.border }]}>
-              <Text style={{ fontSize: 10, color: colors.textMuted }}>LifeOS Suite v1.0.0</Text>
-              <Text style={{ fontSize: 9, color: colors.textMuted, marginTop: 2 }}>For Ultra-Premium HomoSepians</Text>
-              <Text style={{ fontSize: 9, color: colors.textMuted, marginTop: 2 }}>made with ❤️ by Vishnu</Text>
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
 
     </View>
   );
@@ -1481,12 +1431,11 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   recentNoteCard: {
-    width: 140,
-    height: 90,
-    padding: 10,
+    flex: 1,
+    padding: 12,
+    marginBottom: 10,
     margin: 0,
     marginRight: 10,
-    justifyContent: 'space-between',
   },
   noteCardHeader: {
     flexDirection: 'row',
@@ -1506,76 +1455,5 @@ const styles = StyleSheet.create({
   recentNoteTitle: {
     fontSize: 12,
     marginTop: 4,
-  },
-  drawerOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    flexDirection: 'row',
-  },
-  drawerContent: {
-    width: '75%',
-    height: '100%',
-    padding: 20,
-    justifyContent: 'space-between',
-    elevation: 16,
-    shadowColor: '#000000',
-    shadowOffset: { width: 4, height: 0 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-  },
-  drawerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 40,
-    marginBottom: 24,
-    borderBottomWidth: 1,
-    paddingBottom: 16,
-  },
-  drawerTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-  },
-  drawerCloseBtn: {
-    padding: 4,
-  },
-  drawerUserCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  drawerAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  drawerAvatarText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  drawerMenuSection: {
-    flex: 1,
-  },
-  drawerItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    marginBottom: 6,
-  },
-  drawerItemText: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginLeft: 12,
-  },
-  drawerFooter: {
-    borderTopWidth: 1,
-    paddingTop: 16,
-    alignItems: 'center',
-    marginBottom: 20,
   },
 });
